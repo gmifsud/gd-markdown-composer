@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap } from "lucide-react";
@@ -51,15 +51,15 @@ export function Editor({ document }: EditorProps) {
     }
   };
 
-  const getFormattedJson = () => {
-    if (!content.trim()) return "";
+  const formattedJson = useMemo(() => {
+    if (!isJson || !content.trim()) return "";
     if (jsonError) return null;
     try {
       return JSON.stringify(JSON.parse(content), null, 2);
     } catch {
       return null;
     }
-  };
+  }, [isJson, content, jsonError]);
   
   // Debounce typed inputs for auto-saving
   const debouncedContent = useDebounce(content, 1000);
@@ -241,8 +241,8 @@ export function Editor({ document }: EditorProps) {
                       <div className="font-bold mb-2">JSON Error:</div>
                       <div className="text-sm">{jsonError}</div>
                     </div>
-                  ) : getFormattedJson() ? (
-                    getFormattedJson()
+                  ) : formattedJson ? (
+                    formattedJson
                   ) : (
                     <span className="text-gray-400">Formatted JSON will appear here</span>
                   )}
@@ -289,8 +289,8 @@ export function Editor({ document }: EditorProps) {
                       <div className="font-bold mb-2">JSON Error:</div>
                       <div className="text-sm">{jsonError}</div>
                     </div>
-                  ) : getFormattedJson() ? (
-                    getFormattedJson()
+                  ) : formattedJson ? (
+                    formattedJson
                   ) : (
                     <span className="text-gray-400">Formatted JSON will appear here</span>
                   )}
