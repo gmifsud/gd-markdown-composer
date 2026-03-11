@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Loader2, Save } from "lucide-react";
+import { Check, Loader2, Save, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUpdateDocument } from "@/hooks/use-documents";
 import { useDebounce } from "@/hooks/use-debounce";
+import { useToast } from "@/hooks/use-toast";
 import { type DocumentResponse } from "@shared/routes";
 
 interface EditorProps {
@@ -18,6 +19,7 @@ export function Editor({ document }: EditorProps) {
   const [isDirty, setIsDirty] = useState(false);
 
   const updateMutation = useUpdateDocument();
+  const { toast } = useToast();
   
   // Debounce typed inputs for auto-saving
   const debouncedContent = useDebounce(content, 1000);
@@ -62,6 +64,25 @@ export function Editor({ document }: EditorProps) {
     });
   };
 
+  const handleSaveAs = () => {
+    try {
+      const filename = title.trim() || "document";
+      const element = document.createElement("a");
+      element.setAttribute("href", `data:text/markdown;charset=utf-8,${encodeURIComponent(content)}`);
+      element.setAttribute("download", `${filename}.md`);
+      element.style.display = "none";
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+      toast({ description: `Downloaded "${filename}.md"` });
+    } catch (err) {
+      toast({ 
+        description: "Failed to download file", 
+        variant: "destructive" 
+      });
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-white shadow-sm ring-1 ring-black/[0.03] z-10 m-0 md:m-4 md:rounded-2xl overflow-hidden">
       {/* Editor Header */}
@@ -84,10 +105,21 @@ export function Editor({ document }: EditorProps) {
           </span>
           <Button 
             size="sm" 
+            variant="secondary"
+            onClick={handleSaveAs}
+            className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
+            data-testid="button-save-as"
+          >
+            <Download className="w-3.5 h-3.5 mr-1.5" />
+            Save As
+          </Button>
+          <Button 
+            size="sm" 
             variant={isDirty ? "default" : "secondary"}
             onClick={handleManualSave}
             disabled={!isDirty || updateMutation.isPending}
             className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
+            data-testid="button-save"
           >
             <Save className="w-3.5 h-3.5 mr-1.5" />
             Save
