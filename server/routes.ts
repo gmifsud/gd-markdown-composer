@@ -76,11 +76,27 @@ export async function registerRoutes(
     if (existingDocs.length === 0) {
       await storage.createDocument({
         title: "Welcome to Markdown Editor",
+        fileType: "md",
         content: "# Welcome to Your Markdown Editor!\n\nThis is a simple, clean **Markdown Editor**. You can use it to write rich text content using the Markdown syntax.\n\n## Features\n\n- **Real-time Preview**: See how your markdown looks as you type.\n- **Document Management**: Create, edit, and delete documents using the sidebar.\n- **Auto-saving**: Keep your progress safe without hitting a save button.\n\n### Formatting Examples\n\nYou can format text in *italics* or **bold**.\n\n> Blockquotes are great for quotes.\n\n1. First item\n2. Second item\n3. Third item\n\n```js\n// Code blocks look great too\nconsole.log('Hello World!');\n```",
       });
       await storage.createDocument({
         title: "Project Ideas",
+        fileType: "md",
         content: "## Cool Ideas\n\n- Build a markdown editor\n- Build a task manager\n- Learn Rust\n\n*Note: Need more ideas.*",
+      });
+      await storage.createDocument({
+        title: "Config Example",
+        fileType: "json",
+        content: JSON.stringify({
+          name: "My Project",
+          version: "1.0.0",
+          description: "A sample JSON configuration file",
+          settings: {
+            debug: true,
+            timeout: 5000
+          },
+          features: ["auth", "api", "database"]
+        }, null, 2),
       });
     }
   } catch (err) {

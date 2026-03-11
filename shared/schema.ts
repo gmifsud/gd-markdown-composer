@@ -6,14 +6,19 @@ export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
   title: text("title").notNull().default("Untitled Document"),
   content: text("content").notNull().default(""),
+  fileType: text("file_type").notNull().default("md"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+export const fileTypeEnum = z.enum(["md", "json"]);
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({ 
   id: true, 
   createdAt: true, 
   updatedAt: true 
+}).extend({
+  fileType: fileTypeEnum
 });
 
 export type Document = typeof documents.$inferSelect;

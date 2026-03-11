@@ -1,7 +1,7 @@
 import { useDocuments, useCreateDocument, useDeleteDocument } from "@/hooks/use-documents";
 import { useLocation } from "wouter";
 import { format } from "date-fns";
-import { FileText, Plus, Trash2, Loader2 } from "lucide-react";
+import { FileText, Plus, Trash2, Loader2, FileJson } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -28,8 +28,8 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
   const [_, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const handleCreate = () => {
-    createMutation.mutate({}, {
+  const handleCreate = (fileType: "md" | "json" = "md") => {
+    createMutation.mutate({ fileType }, {
       onSuccess: (newDoc) => {
         setLocation(`/d/${newDoc.id}`);
         onNavigate?.();
@@ -61,17 +61,32 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
           <div className="w-6 h-6 bg-primary text-primary-foreground rounded-md flex items-center justify-center shadow-sm">
             <FileText className="w-3.5 h-3.5" />
           </div>
-          Notes
+          Files
         </h1>
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          onClick={handleCreate} 
-          disabled={createMutation.isPending}
-          className="h-8 w-8 text-gray-500 hover:text-gray-900 transition-colors"
-        >
-          {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-        </Button>
+        <div className="flex gap-1">
+          <Button 
+            variant="ghost" 
+            size="icon"
+            onClick={() => handleCreate("md")}
+            disabled={createMutation.isPending}
+            className="h-8 w-8 text-gray-500 hover:text-gray-900 transition-colors"
+            title="New Markdown"
+            data-testid="button-create-md"
+          >
+            {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="icon"
+            onClick={() => handleCreate("json")}
+            disabled={createMutation.isPending}
+            className="h-8 w-8 text-gray-500 hover:text-gray-900 transition-colors"
+            title="New JSON"
+            data-testid="button-create-json"
+          >
+            <FileJson className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Document List */}
@@ -91,6 +106,7 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
         ) : (
           documents?.map((doc) => {
             const isSelected = activeId === doc.id;
+            const isJson = doc.fileType === "json";
             return (
               <div 
                 key={doc.id}
@@ -102,9 +118,16 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className={`font-semibold text-[13px] leading-snug truncate ${isSelected ? 'text-gray-900' : ''}`}>
-                    {doc.title || "Untitled Document"}
-                  </span>
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {isJson ? (
+                      <FileJson className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                    ) : (
+                      <FileText className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+                    )}
+                    <span className={`font-semibold text-[13px] leading-snug truncate ${isSelected ? 'text-gray-900' : ''}`}>
+                      {doc.title || "Untitled Document"}
+                    </span>
+                  </div>
                   
                   {/* Delete Button - Using stopPropagation to prevent navigation */}
                   <AlertDialog>
