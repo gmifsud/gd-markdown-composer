@@ -67,13 +67,13 @@ export function Editor({ document }: EditorProps) {
   const handleSaveAs = () => {
     try {
       const filename = title.trim() || "document";
-      const element = document.createElement("a");
+      const element = window.document.createElement("a");
       element.setAttribute("href", `data:text/markdown;charset=utf-8,${encodeURIComponent(content)}`);
       element.setAttribute("download", `${filename}.md`);
       element.style.display = "none";
-      document.body.appendChild(element);
+      window.document.body.appendChild(element);
       element.click();
-      document.body.removeChild(element);
+      window.document.body.removeChild(element);
       toast({ description: `Downloaded "${filename}.md"` });
     } catch (err) {
       toast({ 
