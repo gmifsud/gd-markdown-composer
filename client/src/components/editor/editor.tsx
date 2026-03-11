@@ -50,6 +50,16 @@ export function Editor({ document }: EditorProps) {
       });
     }
   };
+
+  const getFormattedJson = () => {
+    if (!content.trim()) return "";
+    if (jsonError) return null;
+    try {
+      return JSON.stringify(JSON.parse(content), null, 2);
+    } catch {
+      return null;
+    }
+  };
   
   // Debounce typed inputs for auto-saving
   const debouncedContent = useDebounce(content, 1000);
@@ -78,7 +88,7 @@ export function Editor({ document }: EditorProps) {
     } else {
       setJsonError(null);
     }
-  }, [isJson]);
+  }, [isJson, content]);
 
   // Execute Auto-save
   useEffect(() => {
@@ -231,8 +241,8 @@ export function Editor({ document }: EditorProps) {
                       <div className="font-bold mb-2">JSON Error:</div>
                       <div className="text-sm">{jsonError}</div>
                     </div>
-                  ) : content.trim() ? (
-                    JSON.stringify(JSON.parse(content), null, 2)
+                  ) : getFormattedJson() ? (
+                    getFormattedJson()
                   ) : (
                     <span className="text-gray-400">Formatted JSON will appear here</span>
                   )}
@@ -279,8 +289,8 @@ export function Editor({ document }: EditorProps) {
                       <div className="font-bold mb-2">JSON Error:</div>
                       <div className="text-sm">{jsonError}</div>
                     </div>
-                  ) : content.trim() ? (
-                    JSON.stringify(JSON.parse(content), null, 2)
+                  ) : getFormattedJson() ? (
+                    getFormattedJson()
                   ) : (
                     <span className="text-gray-400">Formatted JSON will appear here</span>
                   )}
