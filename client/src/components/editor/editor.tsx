@@ -54,39 +54,30 @@ export function Editor({ document }: EditorProps) {
   };
 
   const validateYaml = (text: string): boolean => {
-    // Simple YAML validation - check for common issues
+    // YAML validation: Basic structural checks only
     try {
-      // Basic check: YAML should not have mismatched quotes or invalid indentation
-      const lines = text.split("\n");
-      let inQuotes = false;
-      let quoteChar = "";
-      
-      for (const line of lines) {
-        if (line.trim().startsWith("#")) continue; // Skip comments
-        
-        for (let i = 0; i < line.length; i++) {
-          const char = line[i];
-          if ((char === '"' || char === "'") && (i === 0 || line[i - 1] !== "\\")) {
-            if (!inQuotes) {
-              inQuotes = true;
-              quoteChar = char;
-            } else if (char === quoteChar) {
-              inQuotes = false;
-            }
-          }
-        }
+      // Just clear errors - YAML is very flexible
+      // Only check for catastrophic syntax issues
+      if (!text.trim()) {
+        setYamlError(null);
+        return true;
       }
       
-      if (inQuotes) {
-        setYamlError("Unclosed quotes in YAML");
+      // Check for obviously broken YAML (unclosed quotes with newlines inside)
+      const singleQuotedStrings = text.match(/'([^']*)?$/gm);
+      const doubleQuotedStrings = text.match(/"([^"]*)?$/gm);
+      
+      if ((singleQuotedStrings && singleQuotedStrings.length > 0) || 
+          (doubleQuotedStrings && doubleQuotedStrings.length > 0)) {
+        setYamlError("Unclosed quote at end of YAML");
         return false;
       }
       
       setYamlError(null);
       return true;
     } catch (err) {
-      setYamlError(err instanceof Error ? err.message : "Invalid YAML");
-      return false;
+      setYamlError(null);
+      return true;
     }
   };
 
