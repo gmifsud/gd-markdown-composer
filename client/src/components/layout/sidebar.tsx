@@ -129,9 +129,14 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
                     ) : (
                       <FileText className="w-3.5 h-3.5 shrink-0 text-gray-400" />
                     )}
-                    <span className={`font-semibold text-[13px] leading-snug truncate ${isSelected ? 'text-gray-900' : ''}`}>
-                      {doc.title || "Untitled Document"}
-                    </span>
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className={`font-semibold text-[13px] leading-snug truncate ${isSelected ? 'text-gray-900' : ''}`}>
+                        {doc.title || "Untitled Document"}
+                      </span>
+                      <span className="text-[10px] text-gray-400">
+                        {isJson ? ".json" : isYaml ? ".yaml" : ".md"}
+                      </span>
+                    </div>
                   </div>
                   
                   {/* Delete Button - Using stopPropagation to prevent navigation */}
