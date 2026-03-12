@@ -313,7 +313,7 @@ export function Editor({ document }: EditorProps) {
                 setContent(e.target.value);
                 if (isJson) validateJson(e.target.value);
               }}
-              placeholder={isJson ? "Start writing JSON..." : "Start writing markdown..."}
+              placeholder={isJson ? "Start writing JSON..." : isYaml ? "Start writing YAML..." : "Start writing..."}
               spellCheck={false}
             />
           </div>
