@@ -302,7 +302,7 @@ export function Editor({ document }: EditorProps) {
         <div className="hidden md:flex flex-1 min-h-0">
           <div className="flex-1 flex flex-col min-h-0 border-r border-gray-100/80 group">
             <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-              {isJson ? "JSON" : "Markdown"}
+              {isJson ? "JSON" : isYaml ? "YAML" : "Markdown"}
             </div>
             <textarea
               className={`flex-1 resize-none p-6 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
