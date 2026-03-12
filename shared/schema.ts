@@ -18,7 +18,7 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({
   createdAt: true, 
   updatedAt: true 
 }).extend({
-  fileType: fileTypeEnum
+  fileType: fileTypeEnum.default("md")
 });
 
 export type Document = typeof documents.$inferSelect;
