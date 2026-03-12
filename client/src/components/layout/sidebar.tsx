@@ -3,17 +3,6 @@ import { useLocation } from "wouter";
 import { format } from "date-fns";
 import { FileText, Plus, Trash2, Loader2, FileJson, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 interface SidebarProps {
@@ -37,15 +26,17 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
     });
   };
 
-  const handleDelete = (id: number) => {
-    deleteMutation.mutate(id, {
-      onSuccess: () => {
-        if (activeId === id) {
-          setLocation("/");
+  const handleDelete = (id: number, title: string) => {
+    if (window.confirm(`Are you sure you want to delete "${title}"? This action cannot be undone.`)) {
+      deleteMutation.mutate(id, {
+        onSuccess: () => {
+          if (activeId === id) {
+            setLocation("/");
+          }
+          toast({ description: "Document deleted successfully." });
         }
-        toast({ description: "Document deleted successfully." });
-      }
-    });
+      });
+    }
   };
 
   const navigateTo = (id: number) => {
@@ -144,38 +135,24 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
                   </div>
                   
                   {/* Delete Button - Using stopPropagation to prevent navigation */}
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className={`h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -mt-0.5 -mr-1 ${isSelected ? 'text-gray-400 hover:text-destructive hover:bg-red-50' : 'text-gray-400 hover:text-destructive'}`}
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Document</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete "{doc.title || "Untitled"}"? This action cannot be undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel onClick={(e) => e.stopPropagation()}>Cancel</AlertDialogCancel>
-                        <AlertDialogAction 
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            handleDelete(doc.id); 
-                          }}
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                        >
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    disabled={deleteMutation.isPending}
+                    className={`h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -mt-0.5 -mr-1 ${isSelected ? 'text-gray-400 hover:text-destructive hover:bg-red-50' : 'text-gray-400 hover:text-destructive'}`}
+                    onClick={(e) => { 
+                      e.preventDefault(); 
+                      e.stopPropagation();
+                      handleDelete(doc.id, doc.title || "Untitled Document");
+                    }}
+                    data-testid="button-delete"
+                  >
+                    {deleteMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3 h-3" />
+                    )}
+                  </Button>
                 </div>
                 <span className={`text-[11px] font-medium ${isSelected ? 'text-gray-500' : 'text-gray-400'}`}>
                   {doc.updatedAt ? format(new Date(doc.updatedAt), 'MMM d, h:mm a') : 'Just now'}
