@@ -11,7 +11,7 @@ export const documents = pgTable("documents", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const fileTypeEnum = z.enum(["md", "json"]);
+export const fileTypeEnum = z.enum(["md", "json", "yaml"]);
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({ 
   id: true, 

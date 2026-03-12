@@ -18,11 +18,13 @@ export function Editor({ document }: EditorProps) {
   const [title, setTitle] = useState(document.title || "");
   const [isDirty, setIsDirty] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [yamlError, setYamlError] = useState<string | null>(null);
 
   const updateMutation = useUpdateDocument();
   const { toast } = useToast();
   
   const isJson = document.fileType === "json";
+  const isYaml = document.fileType === "yaml";
 
   const validateJson = (text: string): boolean => {
     try {
@@ -51,6 +53,70 @@ export function Editor({ document }: EditorProps) {
     }
   };
 
+  const validateYaml = (text: string): boolean => {
+    // Simple YAML validation - check for common issues
+    try {
+      // Basic check: YAML should not have mismatched quotes or invalid indentation
+      const lines = text.split("\n");
+      let inQuotes = false;
+      let quoteChar = "";
+      
+      for (const line of lines) {
+        if (line.trim().startsWith("#")) continue; // Skip comments
+        
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if ((char === '"' || char === "'") && (i === 0 || line[i - 1] !== "\\")) {
+            if (!inQuotes) {
+              inQuotes = true;
+              quoteChar = char;
+            } else if (char === quoteChar) {
+              inQuotes = false;
+            }
+          }
+        }
+      }
+      
+      if (inQuotes) {
+        setYamlError("Unclosed quotes in YAML");
+        return false;
+      }
+      
+      setYamlError(null);
+      return true;
+    } catch (err) {
+      setYamlError(err instanceof Error ? err.message : "Invalid YAML");
+      return false;
+    }
+  };
+
+  const prettifyYaml = () => {
+    try {
+      // Simple YAML prettifier - normalize indentation
+      const lines = content.split("\n");
+      const pretty = lines
+        .map(line => {
+          if (line.trim() === "") return "";
+          const trimmed = line.trim();
+          if (trimmed.startsWith("-")) {
+            return "- " + trimmed.slice(1).trim();
+          }
+          return trimmed;
+        })
+        .join("\n");
+      
+      setContent(pretty);
+      setYamlError(null);
+      toast({ description: "YAML formatted successfully" });
+    } catch (err) {
+      setYamlError(err instanceof Error ? err.message : "Invalid YAML");
+      toast({ 
+        description: "Cannot format YAML", 
+        variant: "destructive" 
+      });
+    }
+  };
+
   const formattedJson = useMemo(() => {
     if (!isJson || !content.trim()) return "";
     if (jsonError) return null;
@@ -60,6 +126,28 @@ export function Editor({ document }: EditorProps) {
       return null;
     }
   }, [isJson, content, jsonError]);
+
+  const formattedYaml = useMemo(() => {
+    if (!isYaml || !content.trim()) return "";
+    if (yamlError) return null;
+    try {
+      // Simple YAML formatter - normalize structure
+      const lines = content.split("\n");
+      const formatted = lines
+        .map(line => {
+          if (line.trim() === "") return "";
+          const trimmed = line.trim();
+          if (trimmed.startsWith("-")) {
+            return "- " + trimmed.slice(1).trim();
+          }
+          return trimmed;
+        })
+        .join("\n");
+      return formatted;
+    } catch {
+      return null;
+    }
+  }, [isYaml, content, yamlError]);
   
   // Debounce typed inputs for auto-saving
   const debouncedContent = useDebounce(content, 1000);
@@ -81,14 +169,17 @@ export function Editor({ document }: EditorProps) {
     }
   }, [content, title, document.content, document.title]);
 
-  // Validate JSON when content changes
+  // Validate JSON and YAML when content changes
   useEffect(() => {
     if (isJson && content.trim()) {
       validateJson(content);
+    } else if (isYaml && content.trim()) {
+      validateYaml(content);
     } else {
       setJsonError(null);
+      setYamlError(null);
     }
-  }, [isJson, content]);
+  }, [isJson, isYaml, content]);
 
   // Execute Auto-save
   useEffect(() => {
@@ -145,19 +236,19 @@ export function Editor({ document }: EditorProps) {
           placeholder="Untitled Document"
         />
         <div className="flex items-center gap-3 md:gap-5">
-          {isJson && jsonError && (
+          {(isJson || isYaml) && (isJson ? jsonError : yamlError) && (
             <span className="text-[11px] md:text-xs font-medium text-red-500 flex items-center gap-1.5 hidden sm:flex">
               <AlertCircle className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Invalid JSON</span>
+              <span className="hidden md:inline">Invalid {isJson ? "JSON" : "YAML"}</span>
             </span>
           )}
-          {isJson && !jsonError && content.trim() && (
+          {(isJson || isYaml) && !(isJson ? jsonError : yamlError) && content.trim() && (
             <span className="text-[11px] md:text-xs font-medium text-green-500 flex items-center gap-1.5 hidden sm:flex">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Valid JSON</span>
+              <span className="hidden md:inline">Valid {isJson ? "JSON" : "YAML"}</span>
             </span>
           )}
-          {!isJson && (
+          {!isJson && !isYaml && (
             <span className="text-[11px] md:text-xs font-medium text-gray-400 flex items-center gap-1.5 md:gap-2">
               {updateMutation.isPending ? (
                 <><Loader2 className="w-3.5 h-3.5 animate-spin" /> <span className="hidden md:inline">Saving...</span></>
@@ -168,11 +259,11 @@ export function Editor({ document }: EditorProps) {
               )}
             </span>
           )}
-          {isJson && (
+          {(isJson || isYaml) && (
             <Button 
               size="sm" 
               variant="secondary"
-              onClick={prettifyJson}
+              onClick={isJson ? prettifyJson : prettifyYaml}
               className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
               data-testid="button-prettify"
             >
@@ -229,22 +320,35 @@ export function Editor({ document }: EditorProps) {
           
           <div className="flex-1 flex flex-col min-h-0 bg-[#fafafa]">
             <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-              {isJson ? "Formatted" : "Preview"}
+              {isJson || isYaml ? "Formatted" : "Preview"}
             </div>
             <div className="flex-1 overflow-y-auto p-6 md:p-8">
-              {isJson ? (
+              {isJson || isYaml ? (
                 <div className={`font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
-                  jsonError ? "text-red-600" : "text-gray-700"
+                  isJson ? (jsonError ? "text-red-600" : "text-gray-700") : (yamlError ? "text-red-600" : "text-gray-700")
                 }`}>
-                  {jsonError ? (
-                    <div className="text-red-600">
-                      <div className="font-bold mb-2">JSON Error:</div>
-                      <div className="text-sm">{jsonError}</div>
-                    </div>
-                  ) : formattedJson ? (
-                    formattedJson
+                  {isJson ? (
+                    jsonError ? (
+                      <div className="text-red-600">
+                        <div className="font-bold mb-2">JSON Error:</div>
+                        <div className="text-sm">{jsonError}</div>
+                      </div>
+                    ) : formattedJson ? (
+                      formattedJson
+                    ) : (
+                      <span className="text-gray-400">Formatted JSON will appear here</span>
+                    )
                   ) : (
-                    <span className="text-gray-400">Formatted JSON will appear here</span>
+                    yamlError ? (
+                      <div className="text-red-600">
+                        <div className="font-bold mb-2">YAML Error:</div>
+                        <div className="text-sm">{yamlError}</div>
+                      </div>
+                    ) : formattedYaml ? (
+                      formattedYaml
+                    ) : (
+                      <span className="text-gray-400">Formatted YAML will appear here</span>
+                    )
                   )}
                 </div>
               ) : (
@@ -280,19 +384,32 @@ export function Editor({ document }: EditorProps) {
               />
             </TabsContent>
             <TabsContent value="preview" className="flex-1 overflow-y-auto p-5 m-0 data-[state=active]:block min-h-0 bg-[#fafafa]">
-              {isJson ? (
+              {isJson || isYaml ? (
                 <div className={`font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
-                  jsonError ? "text-red-600" : "text-gray-700"
+                  isJson ? (jsonError ? "text-red-600" : "text-gray-700") : (yamlError ? "text-red-600" : "text-gray-700")
                 }`}>
-                  {jsonError ? (
-                    <div className="text-red-600">
-                      <div className="font-bold mb-2">JSON Error:</div>
-                      <div className="text-sm">{jsonError}</div>
-                    </div>
-                  ) : formattedJson ? (
-                    formattedJson
+                  {isJson ? (
+                    jsonError ? (
+                      <div className="text-red-600">
+                        <div className="font-bold mb-2">JSON Error:</div>
+                        <div className="text-sm">{jsonError}</div>
+                      </div>
+                    ) : formattedJson ? (
+                      formattedJson
+                    ) : (
+                      <span className="text-gray-400">Formatted JSON will appear here</span>
+                    )
                   ) : (
-                    <span className="text-gray-400">Formatted JSON will appear here</span>
+                    yamlError ? (
+                      <div className="text-red-600">
+                        <div className="font-bold mb-2">YAML Error:</div>
+                        <div className="text-sm">{yamlError}</div>
+                      </div>
+                    ) : formattedYaml ? (
+                      formattedYaml
+                    ) : (
+                      <span className="text-gray-400">Formatted YAML will appear here</span>
+                    )
                   )}
                 </div>
               ) : (

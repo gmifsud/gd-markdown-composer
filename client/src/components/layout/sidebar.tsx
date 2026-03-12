@@ -1,7 +1,7 @@
 import { useDocuments, useCreateDocument, useDeleteDocument } from "@/hooks/use-documents";
 import { useLocation } from "wouter";
 import { format } from "date-fns";
-import { FileText, Plus, Trash2, Loader2, FileJson } from "lucide-react";
+import { FileText, Plus, Trash2, Loader2, FileJson, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -28,7 +28,7 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
   const [_, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const handleCreate = (fileType: "md" | "json" = "md") => {
+  const handleCreate = (fileType: "md" | "json" | "yaml" = "md") => {
     createMutation.mutate({ fileType }, {
       onSuccess: (newDoc) => {
         setLocation(`/d/${newDoc.id}`);
@@ -86,6 +86,17 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
           >
             <FileJson className="w-4 h-4" />
           </Button>
+          <Button 
+            variant="ghost" 
+            size="icon"
+            onClick={() => handleCreate("yaml")}
+            disabled={createMutation.isPending}
+            className="h-8 w-8 text-gray-500 hover:text-gray-900 transition-colors"
+            title="New YAML"
+            data-testid="button-create-yaml"
+          >
+            <Code2 className="w-4 h-4" />
+          </Button>
         </div>
       </div>
 
@@ -107,6 +118,7 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
           documents?.map((doc) => {
             const isSelected = activeId === doc.id;
             const isJson = doc.fileType === "json";
+            const isYaml = doc.fileType === "yaml";
             return (
               <div 
                 key={doc.id}
@@ -121,6 +133,8 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     {isJson ? (
                       <FileJson className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                    ) : isYaml ? (
+                      <Code2 className="w-3.5 h-3.5 shrink-0 text-purple-500" />
                     ) : (
                       <FileText className="w-3.5 h-3.5 shrink-0 text-gray-400" />
                     )}
