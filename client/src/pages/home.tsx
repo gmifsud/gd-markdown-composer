@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
-import { Menu, FileText, Plus, Loader2 } from "lucide-react";
+import { Menu, FileText, Plus, Loader2, LayoutList } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
+import { HorizontalTabs } from "@/components/layout/horizontal-tabs";
 import { Editor } from "@/components/editor/editor";
 import { useDocument, useCreateDocument } from "@/hooks/use-documents";
 import { Button } from "@/components/ui/button";
@@ -72,13 +73,23 @@ export default function Home() {
   const [match, params] = useRoute("/d/:id");
   const activeId = match && params?.id ? parseInt(params.id) : null;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [useHorizontalTabs, setUseHorizontalTabs] = useState(false);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#eef0f2]">
-      {/* Desktop Sidebar */}
-      <div className="hidden md:block w-72 lg:w-80 shrink-0 h-full shadow-[2px_0_10px_rgba(0,0,0,0.02)] z-20 relative">
-        <Sidebar activeId={activeId} />
-      </div>
+    <div className="flex h-screen w-full overflow-hidden bg-[#eef0f2] flex-col md:flex-row">
+      {/* Desktop Sidebar - Hidden when using horizontal tabs */}
+      {!useHorizontalTabs && (
+        <div className="hidden md:block w-72 lg:w-80 shrink-0 h-full shadow-[2px_0_10px_rgba(0,0,0,0.02)] z-20 relative">
+          <Sidebar activeId={activeId} />
+        </div>
+      )}
+
+      {/* Horizontal Tabs - Desktop only */}
+      {useHorizontalTabs && (
+        <div className="hidden md:block w-full h-auto shrink-0 order-first">
+          <HorizontalTabs activeId={activeId} />
+        </div>
+      )}
 
       <main className="flex-1 flex flex-col min-w-0 h-full relative z-10 bg-[#eef0f2]">
         {/* Mobile Header with menu trigger */}
@@ -96,6 +107,21 @@ export default function Home() {
           <span className="font-semibold text-sm tracking-tight text-gray-800">
             {activeId ? "Editor" : "Markdown App"}
           </span>
+        </div>
+
+        {/* Desktop Header with Layout Toggle */}
+        <div className="hidden md:flex items-center justify-end h-12 border-b border-gray-200 px-4 bg-white shrink-0 gap-2">
+          <Button
+            size="sm"
+            variant={useHorizontalTabs ? "default" : "secondary"}
+            onClick={() => setUseHorizontalTabs(!useHorizontalTabs)}
+            className="h-8 px-3 text-xs rounded-full"
+            data-testid="button-toggle-layout"
+            title={useHorizontalTabs ? "Show sidebar" : "Show tabs"}
+          >
+            <LayoutList className="w-3.5 h-3.5 mr-1.5" />
+            {useHorizontalTabs ? "Sidebar" : "Tabs"}
+          </Button>
         </div>
 
         {/* Main Content Area */}
