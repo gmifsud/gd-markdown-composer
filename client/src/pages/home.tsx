@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
-import { Menu, FileText, Plus, Loader2 } from "lucide-react";
+import { Menu, FileText, Plus, Loader2, Files, ChevronLeft, ChevronRight } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { HorizontalTabs } from "@/components/layout/horizontal-tabs";
+import { ExplorerPanel } from "@/components/layout/explorer-panel";
 import { Editor } from "@/components/editor/editor";
 import { useDocument, useCreateDocument } from "@/hooks/use-documents";
 import { Button } from "@/components/ui/button";
@@ -52,11 +53,11 @@ function EmptyState() {
       </div>
       <h2 className="text-2xl font-bold mb-2 text-gray-900 tracking-tight">No Document Selected</h2>
       <p className="text-gray-500 text-[15px] mb-8 max-w-[300px] text-center leading-relaxed">
-        Choose a document from the sidebar to start writing, or create a new one.
+        Choose a document from the explorer or create a new one.
       </p>
-      <Button 
-        onClick={handleCreate} 
-        disabled={createMutation.isPending} 
+      <Button
+        onClick={handleCreate}
+        disabled={createMutation.isPending}
         className="rounded-full px-8 h-12 shadow-md hover:shadow-lg transition-all text-[14px] font-semibold"
       >
         {createMutation.isPending ? (
@@ -73,17 +74,57 @@ export default function Home() {
   const [match, params] = useRoute("/d/:id");
   const activeId = match && params?.id ? parseInt(params.id) : null;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(true);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#eef0f2] flex-col">
-      {/* Horizontal Tabs - Desktop only */}
-      <div className="hidden md:block w-full h-auto shrink-0">
-        <HorizontalTabs activeId={activeId} />
+    <div className="flex h-screen w-full overflow-hidden bg-[#eef0f2]">
+
+      {/* ── DESKTOP LAYOUT ── */}
+      <div className="hidden md:flex flex-1 min-w-0 h-full">
+
+        {/* Activity Bar */}
+        <div className="flex flex-col items-center py-2 gap-1 w-12 shrink-0 bg-[#333333] border-r border-[#252526]">
+          <button
+            className={`flex items-center justify-center w-9 h-9 rounded transition-colors ${
+              explorerOpen
+                ? "text-white bg-[#4c4c4c]"
+                : "text-[#858585] hover:text-white"
+            }`}
+            onClick={() => setExplorerOpen(v => !v)}
+            title="Explorer"
+            data-testid="button-toggle-explorer"
+          >
+            <Files className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Explorer Panel */}
+        {explorerOpen && (
+          <div className="w-56 shrink-0 h-full border-r border-[#252526] relative">
+            <ExplorerPanel activeId={activeId} />
+            {/* Collapse handle */}
+            <button
+              className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-[#3c3c3c] border border-[#555] rounded-full flex items-center justify-center text-[#aaa] hover:text-white hover:bg-[#505050] transition-colors shadow"
+              onClick={() => setExplorerOpen(false)}
+              title="Close explorer"
+            >
+              <ChevronLeft className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+        {/* Main: tabs + editor */}
+        <div className="flex-1 flex flex-col min-w-0 h-full">
+          <HorizontalTabs activeId={activeId} />
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {activeId ? <EditorLoader id={activeId} /> : <EmptyState />}
+          </div>
+        </div>
       </div>
 
-      <main className="flex-1 flex flex-col min-w-0 h-full relative z-10 bg-[#eef0f2]">
-        {/* Mobile Header with menu trigger */}
-        <div className="md:hidden flex items-center h-14 border-b border-gray-200 px-4 bg-[#f8f9fa] shrink-0 gap-3">
+      {/* ── MOBILE LAYOUT ── */}
+      <div className="flex md:hidden flex-1 flex-col min-w-0 h-full">
+        <div className="flex items-center h-14 border-b border-gray-200 px-4 bg-[#f8f9fa] shrink-0 gap-3">
           <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="-ml-2 text-gray-600">
@@ -98,14 +139,11 @@ export default function Home() {
             {activeId ? "Editor" : "Markdown App"}
           </span>
         </div>
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {activeId ? <EditorLoader id={activeId} /> : <EmptyState />}
+        </div>
+      </div>
 
-        {/* Main Content Area */}
-        {activeId ? (
-          <EditorLoader id={activeId} />
-        ) : (
-          <EmptyState />
-        )}
-      </main>
     </div>
   );
 }
