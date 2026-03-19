@@ -49,11 +49,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
   const togglePin = (id: number) => {
     setPinnedIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      next.has(id) ? next.delete(id) : next.add(id);
       localStorage.setItem("pinnedTabIds", JSON.stringify([...next]));
       return next;
     });
@@ -83,17 +79,17 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
     }
   };
 
-  const getIcon = (fileType: string, className = "w-3.5 h-3.5 shrink-0") => {
-    if (fileType === "json") return <FileJson className={`${className} text-blue-500`} />;
-    if (fileType === "yaml") return <Code2 className={`${className} text-purple-500`} />;
-    return <FileText className={`${className} text-gray-400`} />;
+  const getIcon = (fileType: string, cls = "w-3.5 h-3.5 shrink-0") => {
+    if (fileType === "json") return <FileJson className={`${cls} text-blue-500`} />;
+    if (fileType === "yaml") return <Code2 className={`${cls} text-purple-500`} />;
+    return <FileText className={`${cls} text-gray-400`} />;
   };
 
   if (isLoading) {
     return (
-      <div className="h-14 border-b border-gray-200 bg-white flex items-center px-4 gap-2">
+      <div className="h-12 border-b border-gray-200 bg-white flex items-center px-4 gap-2">
         <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-        <span className="text-sm text-gray-400">Loading documents...</span>
+        <span className="text-sm text-gray-400">Loading...</span>
       </div>
     );
   }
@@ -103,53 +99,57 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
 
   return (
     <>
-      <div className="border-b border-gray-200 bg-white shrink-0">
-        <div className="flex items-center h-14 px-3 gap-1 overflow-x-auto">
+      <div className="bg-white border-b border-gray-200 shrink-0">
 
-          {/* New file buttons */}
-          <div className="flex items-center gap-0.5 border-r border-gray-200 pr-3 mr-2 shrink-0">
-            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleCreate("md")}
+        {/* Row 1: Pinned tabs — only shown when tabs are pinned */}
+        {pinned.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 px-3 pt-2 pb-1.5 border-b border-gray-100">
+            <span className="text-[10px] font-semibold tracking-widest text-gray-400 uppercase mr-1 shrink-0">
+              Pinned
+            </span>
+            {pinned.map(doc => {
+              const isSelected = activeId === doc.id;
+              return (
+                <button
+                  key={`pinned-${doc.id}`}
+                  onClick={() => setLocation(`/d/${doc.id}`)}
+                  onContextMenu={(e) => handleRightClick(e, doc.id, doc.title || "Untitled")}
+                  title={doc.title || "Untitled"}
+                  className={`group relative flex items-center gap-1.5 px-2.5 h-8 rounded-md text-sm transition-all border ${
+                    isSelected
+                      ? "bg-amber-50 border-amber-200 text-amber-900 font-medium"
+                      : "border-transparent text-gray-600 hover:bg-gray-50 hover:border-gray-200"
+                  }`}
+                  data-testid={`tab-pinned-${doc.id}`}
+                >
+                  <Pin className="w-2.5 h-2.5 shrink-0 text-amber-400 fill-amber-400" />
+                  {getIcon(doc.fileType)}
+                  <span className="truncate max-w-[140px]">{doc.title || "Untitled"}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Row 2: New file buttons + regular tabs */}
+        <div className="flex flex-wrap items-center gap-1 px-3 py-1.5">
+          {/* Create buttons */}
+          <div className="flex items-center gap-0.5 border-r border-gray-200 pr-2 mr-1 shrink-0">
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCreate("md")}
               disabled={createMutation.isPending} title="New Markdown" data-testid="button-new-md">
-              <FileText className="w-4 h-4 text-gray-400" />
+              <FileText className="w-3.5 h-3.5 text-gray-400" />
             </Button>
-            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleCreate("json")}
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCreate("json")}
               disabled={createMutation.isPending} title="New JSON" data-testid="button-new-json">
-              <FileJson className="w-4 h-4 text-blue-500" />
+              <FileJson className="w-3.5 h-3.5 text-blue-500" />
             </Button>
-            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleCreate("yaml")}
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCreate("yaml")}
               disabled={createMutation.isPending} title="New YAML" data-testid="button-new-yaml">
-              <Code2 className="w-4 h-4 text-purple-500" />
+              <Code2 className="w-3.5 h-3.5 text-purple-500" />
             </Button>
           </div>
 
-          {/* Pinned tabs — icon only */}
-          {pinned.length > 0 && (
-            <>
-              {pinned.map(doc => {
-                const isSelected = activeId === doc.id;
-                return (
-                  <button
-                    key={`pinned-${doc.id}`}
-                    onClick={() => setLocation(`/d/${doc.id}`)}
-                    onContextMenu={(e) => handleRightClick(e, doc.id, doc.title || "Untitled")}
-                    title={doc.title || "Untitled"}
-                    className={`relative flex items-center justify-center h-9 w-9 rounded-md shrink-0 transition-all border ${
-                      isSelected
-                        ? "bg-gray-100 border-gray-300 text-gray-900"
-                        : "border-transparent text-gray-600 hover:bg-gray-50 hover:border-gray-200"
-                    }`}
-                    data-testid={`tab-pinned-${doc.id}`}
-                  >
-                    {getIcon(doc.fileType)}
-                    <Pin className="absolute -top-1 -right-1 w-2.5 h-2.5 text-gray-400 fill-gray-400" />
-                  </button>
-                );
-              })}
-              {unpinned.length > 0 && <div className="w-px h-6 bg-gray-200 mx-1 shrink-0" />}
-            </>
-          )}
-
-          {/* Unpinned tabs */}
+          {/* Regular tabs */}
           {unpinned.map(doc => {
             const isSelected = activeId === doc.id;
             return (
@@ -157,7 +157,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
                 key={doc.id}
                 onClick={() => setLocation(`/d/${doc.id}`)}
                 onContextMenu={(e) => handleRightClick(e, doc.id, doc.title || "Untitled")}
-                className={`group flex items-center gap-2 px-3 h-9 rounded-md whitespace-nowrap text-sm transition-all shrink-0 border ${
+                className={`group flex items-center gap-1.5 px-2.5 h-8 rounded-md whitespace-nowrap text-sm transition-all border ${
                   isSelected
                     ? "bg-gray-100 border-gray-300 text-gray-900 font-medium"
                     : "border-transparent text-gray-600 hover:bg-gray-50 hover:border-gray-200"
@@ -168,7 +168,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
                 <span className="truncate max-w-[140px]">{doc.title || "Untitled"}</span>
                 <span
                   role="button"
-                  className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 flex items-center justify-center rounded hover:text-destructive hover:bg-red-50"
+                  className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 flex items-center justify-center rounded hover:text-destructive"
                   onClick={(e) => { e.stopPropagation(); handleDelete(doc.id, doc.title || "Untitled"); }}
                   data-testid={`button-close-${doc.id}`}
                 >
@@ -184,7 +184,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
         </div>
       </div>
 
-      {/* Custom right-click context menu */}
+      {/* Right-click context menu */}
       {contextMenu && (
         <div
           ref={contextMenuRef}
@@ -197,15 +197,9 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
             onClick={() => togglePin(contextMenu.docId)}
           >
             {pinnedIds.has(contextMenu.docId) ? (
-              <>
-                <PinOff className="w-3.5 h-3.5 text-gray-500" />
-                Unpin tab
-              </>
+              <><PinOff className="w-3.5 h-3.5 text-gray-500" /> Unpin tab</>
             ) : (
-              <>
-                <Pin className="w-3.5 h-3.5 text-gray-500" />
-                Pin tab
-              </>
+              <><Pin className="w-3.5 h-3.5 text-gray-500" /> Pin tab</>
             )}
           </button>
           <div className="h-px bg-gray-100 my-1" />
@@ -213,8 +207,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-red-50 text-red-600 transition-colors"
             onClick={() => handleDelete(contextMenu.docId, contextMenu.docTitle)}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
+            <Trash2 className="w-3.5 h-3.5" /> Delete
           </button>
         </div>
       )}
