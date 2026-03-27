@@ -1,5 +1,5 @@
-import { documents, type InsertDocument, type Document } from "@shared/schema";
-import { db } from "./db";
+import { type InsertDocument, type Document } from "@shared/schema";
+import { db, documents, dbType } from "./db";
 import { eq } from "drizzle-orm";
 
 export interface IStorage {
@@ -26,12 +26,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateDocument(id: number, updateDoc: Partial<InsertDocument>): Promise<Document> {
+    // SQLite stores dates as ISO strings; PostgreSQL uses Date objects
+    const updatedAt = dbType === "sqlite" ? new Date().toISOString() : new Date();
     const [doc] = await db
       .update(documents)
-      .set({ ...updateDoc, updatedAt: new Date() })
+      .set({ ...updateDoc, updatedAt } as any)
       .where(eq(documents.id, id))
       .returning();
-    return doc;
+    return doc as unknown as Document;
   }
 
   async deleteDocument(id: number): Promise<void> {

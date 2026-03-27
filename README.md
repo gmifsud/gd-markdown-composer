@@ -36,7 +36,20 @@ A web-based document editor with support for **Markdown**, **JSON**, and **YAML*
 
 - **Node.js** 20 or later
 - **npm** 10 or later
-- A running **PostgreSQL** instance (v14+)
+- **PostgreSQL** 14+ — only required when `DB_TYPE=postgres`
+
+---
+
+## Database Configuration
+
+The app supports two database backends, switchable via the `DB_TYPE` environment variable:
+
+| `DB_TYPE` | Backend | Notes |
+|---|---|---|
+| `sqlite` *(default)* | SQLite file (`./data/editor.db`) | Zero setup — works out of the box |
+| `postgres` | PostgreSQL via `DATABASE_URL` | Requires a running PostgreSQL server |
+
+You can also override the SQLite file location with `SQLITE_PATH=./my/custom/path.db`.
 
 ---
 
@@ -57,34 +70,33 @@ npm install
 
 ### 3. Configure environment variables
 
-Create a `.env` file in the project root (or export the variables in your shell):
+Create a `.env` file in the project root. For the default **SQLite** setup, only one variable is required:
 
 ```env
-# Required — PostgreSQL connection string
-DATABASE_URL=postgresql://user:password@localhost:5432/markdown_editor
-
-# Required — used to sign HTTP sessions (any long random string)
+# Required — used to sign HTTP sessions
 SESSION_SECRET=change-me-to-a-long-random-secret
+
+# Optional — database backend (default: sqlite)
+# DB_TYPE=sqlite
+
+# Optional — custom SQLite file path (default: ./data/editor.db)
+# SQLITE_PATH=./data/editor.db
 ```
 
-### 4. Push the database schema
+To switch to **PostgreSQL**, add:
 
-This creates (or updates) the required tables in your PostgreSQL database:
+```env
+DB_TYPE=postgres
+DATABASE_URL=postgresql://user:password@localhost:5432/markdown_editor
+```
+
+### 4. (PostgreSQL only) Push the database schema
+
+SQLite creates its table automatically on first start. PostgreSQL requires this step:
 
 ```bash
-npm run db:push
+DB_TYPE=postgres npm run db:push
 ```
-
-The single table created is `documents`:
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | serial (PK) | Auto-incrementing primary key |
-| `title` | text | Document title (defaults to `"Untitled Document"`) |
-| `content` | text | Raw document content |
-| `file_type` | text | One of `md`, `json`, `yaml` (defaults to `md`) |
-| `created_at` | timestamp | Creation timestamp |
-| `updated_at` | timestamp | Last-updated timestamp |
 
 ### 5. Start the development server
 
@@ -99,6 +111,19 @@ http://localhost:5000
 ```
 
 > The Vite frontend proxies API requests to Express automatically — no separate ports or proxy configuration is needed.
+
+---
+
+### Database table — `documents`
+
+| Column | SQLite type | PostgreSQL type | Description |
+|---|---|---|---|
+| `id` | INTEGER (auto) | serial (PK) | Auto-incrementing primary key |
+| `title` | TEXT | text | Document title (default: `"Untitled Document"`) |
+| `content` | TEXT | text | Raw document content |
+| `file_type` | TEXT | text | One of `md`, `json`, `yaml` |
+| `created_at` | TEXT (ISO) | timestamp | Creation time |
+| `updated_at` | TEXT (ISO) | timestamp | Last-updated time |
 
 ---
 
@@ -159,7 +184,9 @@ The server listens on port **5000** by default and serves both the API and the c
 
 The app can be packaged and run as a native desktop application using Electron. When packaged, no separate browser is required — everything runs inside a standalone window.
 
-**How it works:** Electron starts the bundled Express server as a child process, waits for it to respond, then opens a native window pointing at `http://localhost:5000`. External links are opened in the system browser. The app still requires a PostgreSQL connection via `DATABASE_URL`.
+**How it works:** Electron starts the bundled Express server as a child process, waits for it to respond, then opens a native window pointing at `http://localhost:5000`. External links are opened in the system browser.
+
+With the default SQLite backend, the packaged Electron app is **fully self-contained** — no database server is needed. All data is stored in a local `editor.db` file next to the app. To use PostgreSQL instead, set `DB_TYPE=postgres` and `DATABASE_URL` before launching.
 
 ---
 
