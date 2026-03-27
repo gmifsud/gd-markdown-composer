@@ -27,7 +27,8 @@ A web-based document editor with support for **Markdown**, **JSON**, and **YAML*
 | Backend | Express 5, TypeScript, tsx |
 | Database | PostgreSQL via Drizzle ORM |
 | Schema / validation | Drizzle-Zod, Zod |
-| Build | Vite (client) + esbuild (server) |
+| Web build | Vite (client) + esbuild (server) |
+| Desktop | Electron 41 + electron-builder |
 
 ---
 
@@ -154,6 +155,86 @@ The server listens on port **5000** by default and serves both the API and the c
 
 ---
 
+## Electron Desktop App
+
+The app can be packaged and run as a native desktop application using Electron. When packaged, no separate browser is required — everything runs inside a standalone window.
+
+**How it works:** Electron starts the bundled Express server as a child process, waits for it to respond, then opens a native window pointing at `http://localhost:5000`. External links are opened in the system browser. The app still requires a PostgreSQL connection via `DATABASE_URL`.
+
+---
+
+### Running the Desktop App in Development
+
+Ensure your `.env` is configured and `npm run db:push` has been run, then:
+
+```bash
+node electron/dev.mjs
+```
+
+This automatically starts the Express + Vite dev server and then opens the Electron window once the server is ready. Press **Ctrl-C** to shut everything down.
+
+---
+
+### Packaging the Desktop App for Distribution
+
+#### 1. Build the web application
+
+```bash
+npm run build
+```
+
+This produces the compiled server (`dist/index.cjs`) and the compiled frontend (`dist/public/`).
+
+#### 2. (Optional) Add app icons
+
+Place platform-specific icons in the `electron/icons/` directory before building:
+
+| File | Platform | Size |
+|---|---|---|
+| `electron/icons/icon.icns` | macOS | 512×512 (multi-size ICNS) |
+| `electron/icons/icon.ico` | Windows | 256×256 (multi-size ICO) |
+| `electron/icons/icon.png` | Linux | 512×512 PNG |
+
+If icons are omitted, electron-builder uses a default Electron icon.
+
+#### 3. Package the app
+
+```bash
+# Current platform only
+npx electron-builder --config electron-builder.yml
+
+# Windows installer (.exe via NSIS)
+npx electron-builder --win --config electron-builder.yml
+
+# macOS disk image (.dmg)
+npx electron-builder --mac --config electron-builder.yml
+
+# Linux AppImage
+npx electron-builder --linux --config electron-builder.yml
+```
+
+> **Cross-compilation note:** Building a Windows installer from macOS/Linux (or vice versa) requires additional setup. For reliable cross-platform builds, run each command on its target OS, or use a CI pipeline (GitHub Actions, etc.).
+
+The packaged distributable is written to `electron-dist/`.
+
+#### 4. Distribute the environment variables
+
+The packaged app still connects to PostgreSQL via `DATABASE_URL`. The end user must set this variable before launching the app, or you can embed a `.env` file by adding it to the `files` array in `electron-builder.yml`.
+
+---
+
+### Available Commands (Electron)
+
+| Command | Description |
+|---|---|
+| `node electron/dev.mjs` | Start dev server + Electron window together |
+| `npx electron-builder --config electron-builder.yml` | Package for the current platform |
+| `npx electron-builder --win --config electron-builder.yml` | Package for Windows |
+| `npx electron-builder --mac --config electron-builder.yml` | Package for macOS |
+| `npx electron-builder --linux --config electron-builder.yml` | Package for Linux |
+
+---
+
 ## Project Structure
 
 ```
@@ -172,10 +253,15 @@ The server listens on port **5000** by default and serves both the API and the c
 │   ├── routes.ts            # API route handlers
 │   ├── storage.ts           # Database access layer (Drizzle)
 │   └── vite.ts              # Vite dev-server integration
+├── electron/                # Electron desktop app
+│   ├── main.cjs             # Electron main process (CommonJS)
+│   ├── dev.mjs              # Dev launcher (starts server + Electron)
+│   └── icons/               # App icons (icns / ico / png)
 ├── shared/
 │   └── schema.ts            # Drizzle table schema + Zod types (shared by client & server)
 ├── script/
 │   └── build.ts             # Production build script
+├── electron-builder.yml     # electron-builder packaging configuration
 ├── migrations/              # Drizzle-generated SQL migrations
 ├── drizzle.config.ts        # Drizzle Kit configuration
 ├── vite.config.ts           # Vite configuration

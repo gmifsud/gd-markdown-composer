@@ -1,0 +1,40 @@
+appId: com.markdowneditor.app
+productName: Markdown Editor
+
+# Electron entry point
+main: electron/main.cjs
+
+directories:
+  output: electron-dist
+
+# Files to include in the packaged app
+files:
+  - dist/**/*
+  - electron/main.cjs
+  - package.json
+
+asar: true
+
+# macOS
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+
+# Windows
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+# Linux
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Utility
