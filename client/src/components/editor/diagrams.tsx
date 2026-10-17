@@ -205,11 +205,34 @@ function loadDrawioViewer() {
   return drawioLoader;
 }
 
+const looksLikeDrawio = (xml: string) => /<mxfile[\s>]|<mxGraphModel[\s>]/.test(xml);
+
+/** A whole .drawio file: the diagram fills the pane and re-renders as the XML is edited. */
+export function DrawioFileView({ xml }: { xml: string }) {
+  const debounced = useDebounce(xml.trim(), 600);
+  if (!looksLikeDrawio(debounced)) {
+    return (
+      <DiagramError title="Not a draw.io diagram">
+        This file doesn't contain draw.io diagram XML (an &lt;mxfile&gt; or &lt;mxGraphModel&gt; element).
+      </DiagramError>
+    );
+  }
+  return (
+    <Expandable
+      title="Draw.io diagram"
+      pannable={false}
+      className="h-full rounded-lg border border-gray-200 bg-white overflow-hidden"
+      renderFull={() => <DrawioCanvas xml={debounced} large />}
+    >
+      <DrawioCanvas xml={debounced} large />
+    </Expandable>
+  );
+}
+
 function DrawioDiagram({ code }: { code: string }) {
   const xml = code.trim();
-  const looksLikeDrawio = /<mxfile[\s>]|<mxGraphModel[\s>]/.test(xml);
 
-  if (!looksLikeDrawio) {
+  if (!looksLikeDrawio(xml)) {
     return (
       <DiagramError title="Not a draw.io diagram">
         Put the diagram's XML (draw.io: File › Export as › XML, or the contents of a .drawio file) inside the ```drawio block.

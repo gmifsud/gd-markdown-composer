@@ -1,4 +1,4 @@
-# Markdown Editor
+# GD Markdown Composer
 
 A web-based document editor with support for **Markdown**, **JSON**, and **YAML** file types. Documents are persisted in a PostgreSQL database and the editor provides a VSCode-style explorer panel, horizontal tab bar, split-pane editing with live preview, auto-save, and local file import/export.
 

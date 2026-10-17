@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { useDocument, saveDocument, cacheSavedDocument } from "@/hooks/use-documents";
 import type { Saver } from "@/hooks/use-autosave";
 import { fsApi, fsKeys, baseName, copyText, FsNotFoundError } from "@/lib/fs-api";
-import { useWorkspaceActions } from "@/lib/workspace";
-import { editableTypeOf, type FsReadResponse } from "@shared/fs";
+import { dbUri, useWorkspaceActions } from "@/lib/workspace";
+import { isUnlocked, markUnlocked } from "@/lib/unlocked-files";
+import { fileKindOf, opensEditable, type FsReadResponse } from "@shared/fs";
 
 function Loading({ label }: { label: string }) {
   return (
@@ -43,6 +44,7 @@ export function DocumentEditor({ id }: { id: number }) {
       cacheSavedDocument(queryClient, saved);
     };
     return {
+      uri: dbUri(id),
       title: doc.title || "",
       titleEditable: true,
       fileType: (doc.fileType as EditorSource["fileType"]) ?? "md",
@@ -82,25 +84,27 @@ export function FileEditor({ path, uri }: { path: string; uri: string }) {
   const source = useMemo<EditorSource | null>(() => {
     if (!data || data.content === null) return null;
     mtime.current = data.mtimeMs;
-    const editableType = editableTypeOf(path);
-    const save: Saver | undefined = editableType
-      ? async (snapshot, { keepalive, force }) => {
-          const res = await fsApi.write(
-            { path, content: snapshot.content, expectedMtimeMs: force ? undefined : mtime.current ?? undefined },
-            { keepalive },
-          );
-          mtime.current = res.mtimeMs;
-          queryClient.setQueryData<FsReadResponse>(fsKeys.file(path), prev =>
-            prev ? { ...prev, content: snapshot.content, mtimeMs: res.mtimeMs, size: res.size } : prev);
-        }
-      : undefined;
+    const kind = fileKindOf(path);
+    const save: Saver = async (snapshot, { keepalive, force }) => {
+      const res = await fsApi.write(
+        { path, content: snapshot.content, expectedMtimeMs: force ? undefined : mtime.current ?? undefined },
+        { keepalive },
+      );
+      mtime.current = res.mtimeMs;
+      queryClient.setQueryData<FsReadResponse>(fsKeys.file(path), prev =>
+        prev ? { ...prev, content: snapshot.content, mtimeMs: res.mtimeMs, size: res.size } : prev);
+    };
     return {
+      uri,
       title: baseName(path),
       titleEditable: false,
-      fileType: editableType ?? "text",
+      fileType: kind,
       content: data.content,
       path,
       save,
+      // Markdown/JSON/YAML open ready to edit; anything else needs a click on Edit first.
+      startLocked: !opensEditable(kind) && !isUnlocked(path),
+      onUnlock: () => markUnlocked(path),
     };
     // Built once per loaded file: the editor keeps its own state after mounting.
     // eslint-disable-next-line react-hooks/exhaustive-deps

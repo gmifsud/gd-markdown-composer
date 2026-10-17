@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   FS_CLIENT_HEADER,
   type FsCreateRequest, type FsListResponse, type FsReadResponse,
+  type FsSearchRequest, type FsSearchResponse,
   type FsStatus, type FsWriteRequest, type FsWriteResponse,
 } from "@shared/fs";
 
@@ -34,6 +35,8 @@ export const fsApi = {
   read: (file: string) => fsFetch<FsReadResponse>(`/api/fs/read?path=${encodeURIComponent(file)}`),
   write: (body: FsWriteRequest, options: { keepalive?: boolean } = {}) =>
     fsFetch<FsWriteResponse>("/api/fs/write", { method: "PUT", body: JSON.stringify(body), keepalive: options.keepalive }),
+  search: (body: FsSearchRequest, signal?: AbortSignal) =>
+    fsFetch<FsSearchResponse>("/api/fs/search", { method: "POST", body: JSON.stringify(body), signal }),
   create: (body: FsCreateRequest) =>
     fsFetch<FsWriteResponse>("/api/fs/create", { method: "POST", body: JSON.stringify(body) }),
 };

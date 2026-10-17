@@ -1,23 +1,34 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import { parseAllDocuments } from "yaml";
-import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap, Lock, PenLine, Columns2, Eye } from "lucide-react";
+import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap, Lock, LockOpen, PenLine, Columns2, Eye, MoveHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
+import { DrawioFileView } from "@/components/editor/diagrams";
 import { useAutosave, type Saver } from "@/hooks/use-autosave";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { useWorkspace, useWorkspaceActions, type EditorMode } from "@/lib/workspace";
+import { clearActiveEditor, publishActiveEditor, registerRevealHandler } from "@/lib/active-editor";
+import {
+  lineRange, occurrencesBefore, revealHeadingInPreview, revealInTextarea, revealTextInPreview,
+} from "@/components/editor/reveal";
 
 /** What the editor shows and how it saves: a database document or a file on disk. */
 export interface EditorSource {
+  /** Tab URI (db:<id> or file:<path>), used by the Outline and search to jump here. */
+  uri: string;
   title: string;
   /** Database documents can be renamed from the header; files can't (yet). */
   titleEditable: boolean;
-  /** "text" is any other text file: shown read-only without a preview. */
-  fileType: "md" | "json" | "yaml" | "text";
+  /** "drawio" renders the diagram; "text" is any other text file, shown without a preview. */
+  fileType: "md" | "json" | "yaml" | "drawio" | "text";
+  /** Open read-only with an Edit button (other text files and diagrams). */
+  startLocked?: boolean;
+  /** Called when the user unlocks a locked source for editing. */
+  onUnlock?(): void;
   content: string;
   /** Absolute path, for files on disk. */
   path?: string;
@@ -107,11 +118,44 @@ export function Editor({ source }: EditorProps) {
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const { state: workspace } = useWorkspace();
-  const { setEditorMode } = useWorkspaceActions();
-  const mode = workspace.editorMode;
+  const { setEditorMode, setDiagramMode, setPreviewFullWidth } = useWorkspaceActions();
+  const isDrawio = source.fileType === "drawio";
+  const mode = isDrawio ? workspace.diagramMode : workspace.editorMode;
+  const setMode = isDrawio ? setDiagramMode : setEditorMode;
+  const fullWidth = workspace.previewFullWidth;
   const splitGroup = useRef<ImperativePanelGroupHandle>(null);
 
-  const readOnly = !source.save;
+  const [locked, setLocked] = useState(!!source.startLocked);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef(content);
+  contentRef.current = content;
+
+  // Share the live text with the Outline panel.
+  useEffect(() => {
+    publishActiveEditor({ uri: source.uri, fileType: source.fileType, title, content });
+  }, [source.uri, source.fileType, title, content]);
+  useEffect(() => () => clearActiveEditor(source.uri), [source.uri]);
+
+  // Jumps from the Outline and search results: select the line in the source
+  // (when shown) and scroll the preview to the heading or matching text.
+  useEffect(() => registerRevealHandler(source.uri, (target) => {
+    const text = contentRef.current;
+    if (textareaRef.current) revealInTextarea(textareaRef.current, lineRange(text, target.line, target.query));
+    const preview = previewScrollRef.current?.querySelector<HTMLElement>("[data-preview-root]")
+      ? previewScrollRef.current
+      : null;
+    if (!preview) return;
+    if (target.heading) revealHeadingInPreview(preview, target.heading.text, target.heading.occurrence);
+    else if (target.query) {
+      revealTextInPreview(preview, target.query, occurrencesBefore(text, target.line, target.query), !textareaRef.current);
+    }
+  }), [source.uri]);
+  const readOnly = !source.save || locked;
+  const unlock = () => {
+    setLocked(false);
+    source.onUnlock?.();
+  };
   const isPlainText = source.fileType === "text";
   const isJson = source.fileType === "json";
   const isYaml = source.fileType === "yaml";
@@ -187,9 +231,10 @@ export function Editor({ source }: EditorProps) {
   const sourcePane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0" data-testid="source-pane">
       <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-        {isStructured ? formatLabel : "Markdown"}
+        {isStructured ? formatLabel : isDrawio ? "Draw.io XML" : "Markdown"}
       </div>
       <textarea
+        ref={textareaRef}
         className={`flex-1 resize-none p-6 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
           analysis.error ? "border-l-2 border-red-500" : ""
         }`}
@@ -206,18 +251,24 @@ export function Editor({ source }: EditorProps) {
   const previewPane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0 bg-[#fafafa]" data-testid="preview-pane">
       <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-        {isStructured ? "Formatted" : "Preview"}
+        {isStructured ? "Formatted" : isDrawio ? "Diagram" : "Preview"}
       </div>
-      <div className="flex-1 overflow-y-auto p-6 md:p-8">
-        {isStructured ? structuredPreview : (
-          <MarkdownPreview
-            content={content}
-            className={`prose prose-sm md:prose-base prose-slate max-w-[80ch] prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100 ${
-              mode === "preview" ? "mx-auto" : ""
-            }`}
-          />
-        )}
-      </div>
+      {isDrawio ? (
+        <div className="flex-1 min-h-0 p-3">
+          <DrawioFileView xml={content} />
+        </div>
+      ) : (
+        <div ref={previewScrollRef} className="flex-1 overflow-y-auto p-6 md:p-8">
+          {isStructured ? structuredPreview : (
+            <MarkdownPreview
+              content={content}
+              className={`prose prose-sm md:prose-base prose-slate prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100 ${
+                fullWidth ? "max-w-none" : `max-w-[80ch] ${mode === "preview" ? "mx-auto" : ""}`
+              }`}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -245,7 +296,20 @@ export function Editor({ source }: EditorProps) {
           </div>
         )}
         <div className="flex items-center gap-3 md:gap-5">
-          {!isPlainText && !isMobile && <ModeSwitch mode={mode} onChange={setEditorMode} />}
+          {!isPlainText && !isMobile && <ModeSwitch mode={mode} onChange={setMode} />}
+          {!isPlainText && !isStructured && !isDrawio && !isMobile && mode !== "edit" && (
+            <button
+              className={`hidden sm:flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
+                fullWidth ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500 hover:text-gray-800"
+              }`}
+              onClick={() => setPreviewFullWidth(!fullWidth)}
+              aria-pressed={fullWidth}
+              title={fullWidth ? "Use a readable column width" : "Use the full width of the pane"}
+              data-testid="button-full-width"
+            >
+              <MoveHorizontal className="w-3.5 h-3.5" />
+            </button>
+          )}
           {isStructured && analysis.error && (
             <span className="text-[11px] md:text-xs font-medium text-red-500 items-center gap-1.5 hidden sm:flex" title={analysis.error}>
               <AlertCircle className="w-3.5 h-3.5" />
@@ -258,7 +322,17 @@ export function Editor({ source }: EditorProps) {
               <span className="hidden md:inline">Valid {formatLabel}</span>
             </span>
           )}
-          {readOnly ? (
+          {readOnly && source.save ? (
+            <button
+              className="text-[11px] md:text-xs font-medium text-gray-600 flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 rounded-full pl-2.5 pr-3 py-1 transition-colors whitespace-nowrap shrink-0"
+              onClick={unlock}
+              title="This file opened read-only. Click to edit it (changes save to disk)."
+              data-testid="button-unlock"
+            >
+              <Lock className="w-3 h-3" /> Read-only
+              <span className="flex items-center gap-1 text-[#007fd4]"><LockOpen className="w-3 h-3" /> Edit</span>
+            </button>
+          ) : readOnly ? (
             <span className="text-[11px] md:text-xs font-medium text-gray-500 flex items-center gap-1.5 bg-gray-100 rounded-full px-2.5 py-1" data-testid="read-only-badge">
               <Lock className="w-3 h-3" /> Read-only
             </span>
@@ -318,9 +392,11 @@ export function Editor({ source }: EditorProps) {
       <div className="flex-1 flex flex-col min-h-0 bg-white">
         {isPlainText ? (
           <textarea
+            ref={textareaRef}
             className="flex-1 resize-none p-5 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent text-gray-700 whitespace-pre"
             value={content}
-            readOnly
+            onChange={e => setContent(e.target.value)}
+            readOnly={readOnly}
             spellCheck={false}
             wrap="off"
             data-testid="editor-textarea"
@@ -352,20 +428,22 @@ export function Editor({ source }: EditorProps) {
               <div className="px-3 py-2 border-b border-gray-100 bg-[#fafafa] shrink-0">
                 <TabsList className="grid w-full grid-cols-2 bg-gray-200/50 p-1">
                   <TabsTrigger value="edit" className="text-xs rounded shadow-sm data-[state=active]:bg-white">Edit</TabsTrigger>
-                  <TabsTrigger value="preview" className="text-xs rounded shadow-sm data-[state=active]:bg-white">{isStructured ? "Formatted" : "Preview"}</TabsTrigger>
+                  <TabsTrigger value="preview" className="text-xs rounded shadow-sm data-[state=active]:bg-white">{isStructured ? "Formatted" : isDrawio ? "Diagram" : "Preview"}</TabsTrigger>
                 </TabsList>
               </div>
               <TabsContent value="edit" className="flex-1 p-0 m-0 data-[state=active]:flex flex-col min-h-0">
                 <textarea
+                  ref={textareaRef}
                   className="flex-1 resize-none p-5 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-700"
                   value={content}
                   onChange={e => setContent(e.target.value)}
+                  readOnly={readOnly}
                   placeholder={placeholder}
                   spellCheck={false}
                 />
               </TabsContent>
-              <TabsContent value="preview" className="flex-1 overflow-y-auto p-5 m-0 data-[state=active]:block min-h-0 bg-[#fafafa]">
-                {isStructured ? structuredPreview : (
+              <TabsContent ref={previewScrollRef} value="preview" className="flex-1 overflow-y-auto p-5 m-0 data-[state=active]:block min-h-0 bg-[#fafafa]">
+                {isDrawio ? <DrawioFileView xml={content} /> : isStructured ? structuredPreview : (
                   <MarkdownPreview
                     content={content}
                     className="prose prose-sm prose-slate max-w-none prose-headings:tracking-tight"

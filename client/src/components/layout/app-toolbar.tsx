@@ -18,6 +18,16 @@ const NEW_TYPES = [
 const toolbarButton =
   "flex items-center gap-1.5 h-7 px-2 rounded text-[12px] text-gray-700 hover:bg-gray-200/70 disabled:opacity-40 disabled:pointer-events-none";
 
+/** The "M↓" mark from electron/icons/icon.svg, for the toolbar. */
+function AppLogo() {
+  return (
+    <svg viewBox="0 0 208 128" className="h-3.5 w-auto" aria-hidden>
+      <rect x="5" y="5" width="198" height="118" rx="12" fill="none" stroke="currentColor" strokeWidth="12" />
+      <path fill="currentColor" d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" />
+    </svg>
+  );
+}
+
 /** App toolbar across the top of the desktop layout. */
 export function AppToolbar() {
   const { state } = useWorkspace();
@@ -31,6 +41,10 @@ export function AppToolbar() {
 
   return (
     <div className="h-9 shrink-0 flex items-center gap-1 px-2 bg-[#f3f3f3] border-b border-gray-200" role="toolbar" aria-label="Main toolbar">
+      <span className="flex items-center gap-1.5 px-1.5 mr-1 text-[#1d4ed8]" title="GD Markdown Composer">
+        <AppLogo />
+        <span className="text-[12px] font-semibold text-gray-700 hidden lg:inline">GD Markdown Composer</span>
+      </span>
       <button
         className={toolbarButton}
         onClick={() => setSidebar({ visible: !state.sidebar.visible })}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Code2, File, FileJson, FileText, Pin, PinOff, Trash2, X, XSquare } from "lucide-react";
+import { Code2, File, FileJson, FileText, Pin, PinOff, Trash2, Workflow, X, XSquare } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -10,7 +10,7 @@ import { baseName } from "@/lib/fs-api";
 import {
   folderColour, orderedTabs, parseUri, useWorkspace, useWorkspaceActions,
 } from "@/lib/workspace";
-import { editableTypeOf } from "@shared/fs";
+import { fileKindOf } from "@shared/fs";
 
 interface TabInfo {
   uri: string;
@@ -18,7 +18,7 @@ interface TabInfo {
   /** Extra text to tell apart tabs with the same name (the parent folder). */
   detail?: string;
   tooltip: string;
-  type: "md" | "json" | "yaml" | "text";
+  type: "md" | "json" | "yaml" | "drawio" | "text";
   path?: string;
   dbId?: number;
   rootFolder?: { folder: string; index: number } | null;
@@ -29,6 +29,7 @@ function TabIcon({ type }: { type: TabInfo["type"] }) {
   if (type === "json") return <FileJson className={`${cls} text-blue-500`} />;
   if (type === "yaml") return <Code2 className={`${cls} text-purple-500`} />;
   if (type === "md") return <FileText className={`${cls} text-gray-400`} />;
+  if (type === "drawio") return <Workflow className={`${cls} text-orange-500`} />;
   return <File className={`${cls} text-gray-400`} />;
 }
 
@@ -67,7 +68,7 @@ export function TabBar() {
         uri,
         label: baseName(ref.path),
         tooltip: ref.path,
-        type: editableTypeOf(ref.path) ?? "text",
+        type: fileKindOf(ref.path),
         path: ref.path,
         rootFolder: rootFolderOf(ref.path),
       };
@@ -81,10 +82,15 @@ export function TabBar() {
     return list;
   }, [state, documents, rootFolderOf]);
 
-  // Keep the active tab in view.
+  // Keep the active tab in view when the wrapped tab area has to scroll.
   useEffect(() => {
-    const el = scroller.current?.querySelector<HTMLElement>('[data-active="true"]');
-    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const area = scroller.current;
+    const el = area?.querySelector<HTMLElement>('[data-active="true"]');
+    if (!area || !el) return;
+    if (el.offsetTop < area.scrollTop) area.scrollTop = el.offsetTop;
+    else if (el.offsetTop + el.offsetHeight > area.scrollTop + area.clientHeight) {
+      area.scrollTop = el.offsetTop + el.offsetHeight - area.clientHeight;
+    }
   }, [activeUri, tabs.length]);
 
   if (tabs.length === 0) {
@@ -120,7 +126,7 @@ export function TabBar() {
             tabIndex={active ? 0 : -1}
             data-active={active}
             title={tab.tooltip}
-            className={`group relative flex items-center gap-1.5 pl-2.5 pr-1 min-w-0 max-w-[200px] shrink-0 text-[12px] cursor-pointer border-r border-gray-200 select-none ${
+            className={`group relative flex items-center gap-1.5 h-8 pl-2.5 pr-1 min-w-0 max-w-[200px] shrink-0 text-[12px] cursor-pointer border-r border-b border-gray-200 select-none ${
               active ? "bg-white text-gray-900" : "text-gray-600 hover:bg-gray-100"
             }`}
             onClick={() => open(tab.uri)}
@@ -202,10 +208,11 @@ export function TabBar() {
   const otherTabs = tabs.filter(t => !state.pinned.includes(t.uri));
 
   return (
-    <div ref={scroller} className="shrink-0 bg-[#f3f3f3] border-b border-gray-200" data-testid="tab-bar">
+    // Capped height: with very many tabs the area scrolls instead of pushing the editor down.
+    <div ref={scroller} className="relative shrink-0 bg-[#f3f3f3] max-h-[30vh] overflow-y-auto" data-testid="tab-bar">
       {pinnedTabs.length > 0 && (
-        <TabRow label="Pinned tabs" className="bg-[#e9eaec] border-b border-gray-200" testId="tab-row-pinned">
-          <span className="flex items-center px-2 shrink-0 text-amber-500" title="Pinned tabs">
+        <TabRow label="Pinned tabs" className="bg-[#e9eaec]" testId="tab-row-pinned">
+          <span className="flex items-center h-8 px-2 shrink-0 text-amber-500 border-b border-gray-200" title="Pinned tabs">
             <Pin className="w-3 h-3 fill-amber-500" />
           </span>
           {pinnedTabs.map(tab => renderTab(tab, tabs.indexOf(tab)))}
@@ -213,33 +220,24 @@ export function TabBar() {
       )}
       <TabRow label="Open tabs" testId="tab-row-open">
         {otherTabs.length === 0
-          ? <span className="flex items-center px-3 text-[12px] text-gray-400">No other open tabs</span>
+          ? <span className="flex items-center h-8 px-3 text-[12px] text-gray-400">No other open tabs</span>
           : otherTabs.map(tab => renderTab(tab, tabs.indexOf(tab)))}
       </TabRow>
     </div>
   );
 }
 
-/** One horizontally scrolling row of tabs. */
+/** A group of tabs that wraps onto extra lines. */
 function TabRow({ label, className = "", testId, children }: {
   label: string;
   className?: string;
   testId: string;
   children: ReactNode;
 }) {
-  const row = useRef<HTMLDivElement>(null);
   return (
-    <div
-      ref={row}
-      role="tablist"
-      aria-label={label}
-      className={`h-8 flex items-stretch overflow-x-auto overflow-y-hidden scroll-thin ${className}`}
-      onWheel={(e) => {
-        // Let a normal mouse wheel scroll the row sideways.
-        if (row.current && Math.abs(e.deltaY) > Math.abs(e.deltaX)) row.current.scrollLeft += e.deltaY;
-      }}
-      data-testid={testId}
-    >
+    // Tabs wrap onto as many lines as they need; each tab has a bottom border
+    // so the lines read as separate rows.
+    <div role="tablist" aria-label={label} className={`flex flex-wrap items-stretch ${className}`} data-testid={testId}>
       {children}
     </div>
   );

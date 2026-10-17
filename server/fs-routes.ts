@@ -3,8 +3,9 @@ import { promises as fsp } from "fs";
 import os from "os";
 import path from "path";
 import {
-  FS_CLIENT_HEADER, editableTypeOf,
+  FS_CLIENT_HEADER,
   type FsCreateRequest, type FsEntry, type FsListResponse, type FsReadResponse,
+  type FsSearchRequest, type FsSearchResponse, type FsSearchResult,
   type FsStatus, type FsWriteRequest, type FsWriteResponse,
 } from "@shared/fs";
 
@@ -12,6 +13,17 @@ const MAX_READ_BYTES = 20 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 const HIDDEN_ENTRIES = new Set([".git", ".DS_Store", "Thumbs.db"]);
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+// Search limits: big vaults (thousands of files in dot-folders) must not stall the app.
+const SEARCH_SKIP_DIRS = new Set(["node_modules"]);
+const SEARCH_MAX_RESULTS = 500;
+const SEARCH_MAX_ENTRIES = 200_000;
+const SEARCH_MAX_CONTENT_FILES = 20_000;
+const SEARCH_MAX_FILE_BYTES = 2 * 1024 * 1024;
+const SEARCH_MAX_LINES_PER_FILE = 5;
+const SEARCH_TIME_BUDGET_MS = 10_000;
+const SEARCH_PARALLEL_READS = 16;
+const SEARCH_LINE_PREVIEW = 160;
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
@@ -90,10 +102,108 @@ async function atomicWrite(filePath: string, content: string) {
   }
 }
 
-function assertEditable(filePath: string) {
-  if (!editableTypeOf(filePath)) {
-    throw new HttpError(400, "Only .md, .markdown, .json, .yaml and .yml files can be saved");
+/** Trims a long line to a window around the match so results stay readable. */
+function previewLine(text: string, at: number) {
+  if (text.length <= SEARCH_LINE_PREVIEW) return text.trim();
+  const start = Math.max(0, at - 50);
+  const end = Math.min(text.length, start + SEARCH_LINE_PREVIEW);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end).trim()}${end < text.length ? "…" : ""}`;
+}
+
+/** Counts matches of `needle` (lower case) in a text file and keeps the first few lines. */
+function searchText(text: string, needle: string) {
+  const lines: FsSearchResult["lines"] = [];
+  let count = 0;
+  const all = text.split(/\r?\n/);
+  for (let i = 0; i < all.length; i++) {
+    const lower = all[i].toLowerCase();
+    let at = lower.indexOf(needle);
+    if (at < 0) continue;
+    if (lines.length < SEARCH_MAX_LINES_PER_FILE) lines.push({ line: i, text: previewLine(all[i], at) });
+    while (at >= 0) {
+      count++;
+      at = lower.indexOf(needle, at + needle.length);
+    }
   }
+  return { count, lines };
+}
+
+/**
+ * Walks the workspace folders for names (and optionally contents) containing
+ * the query. Stops early at the limits above and reports that it did.
+ */
+async function searchFolders(request: FsSearchRequest, isAborted: () => boolean): Promise<FsSearchResponse> {
+  const started = Date.now();
+  const needle = request.query.trim().toLowerCase();
+  const results: FsSearchResult[] = [];
+  let truncated = false;
+  let entries = 0;
+  let scannedFiles = 0;
+
+  const outOfBudget = () => {
+    if (results.length >= SEARCH_MAX_RESULTS || entries >= SEARCH_MAX_ENTRIES ||
+        Date.now() - started > SEARCH_TIME_BUDGET_MS) {
+      truncated = true;
+    }
+    return truncated || isAborted();
+  };
+
+  const searchFile = async (filePath: string, name: string) => {
+    const nameMatch = name.toLowerCase().includes(needle);
+    let contentMatches = 0;
+    let lines: FsSearchResult["lines"] = [];
+    if (request.contents && scannedFiles < SEARCH_MAX_CONTENT_FILES) {
+      try {
+        const stat = await fsp.stat(filePath);
+        if (stat.size <= SEARCH_MAX_FILE_BYTES) {
+          scannedFiles++;
+          const buf = await fsp.readFile(filePath);
+          if (!looksBinary(buf)) ({ count: contentMatches, lines } = searchText(buf.toString("utf8"), needle));
+        }
+      } catch {
+        // Unreadable files are skipped.
+      }
+    } else if (request.contents) {
+      truncated = true;
+    }
+    if (nameMatch || contentMatches > 0) {
+      results.push({ path: filePath, kind: "file", nameMatch, contentMatches, lines });
+    }
+  };
+
+  for (const root of request.roots) {
+    const stack = [absolutePath(root)];
+    while (stack.length && !outOfBudget()) {
+      const dir = stack.pop()!;
+      let dirents;
+      try {
+        dirents = await fsp.readdir(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      dirents.sort((a, b) => b.name.localeCompare(a.name)); // popped in A–Z order
+      const files: [string, string][] = [];
+      for (const d of dirents) {
+        if (HIDDEN_ENTRIES.has(d.name) || SEARCH_SKIP_DIRS.has(d.name)) continue;
+        entries++;
+        const full = path.join(dir, d.name);
+        if (d.isDirectory()) {
+          stack.push(full);
+          if (d.name.toLowerCase().includes(needle)) {
+            results.push({ path: full, kind: "directory", nameMatch: true, contentMatches: 0, lines: [] });
+          }
+        } else if (d.isFile()) {
+          files.push([full, d.name]);
+        }
+      }
+      for (let i = 0; i < files.length && !outOfBudget(); i += SEARCH_PARALLEL_READS) {
+        await Promise.all(files.slice(i, i + SEARCH_PARALLEL_READS).map(([full, name]) => searchFile(full, name)));
+      }
+    }
+  }
+
+  results.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: "base", numeric: true }));
+  return { results: results.slice(0, SEARCH_MAX_RESULTS), truncated, scannedFiles, elapsedMs: Date.now() - started };
 }
 
 export function registerFsRoutes(app: Express) {
@@ -119,17 +229,16 @@ export function registerFsRoutes(app: Express) {
   app.get("/api/fs/list", handle(async (req, res) => {
     const dir = absolutePath(req.query.path);
     const dirents = await fsp.readdir(dir, { withFileTypes: true });
-    const entries: FsEntry[] = [];
-    for (const d of dirents) {
-      if (HIDDEN_ENTRIES.has(d.name)) continue;
-      let isDir = d.isDirectory();
-      if (d.isSymbolicLink()) {
-        isDir = await fsp.stat(path.join(dir, d.name)).then(s => s.isDirectory(), () => false);
-      } else if (!isDir && !d.isFile()) {
-        continue; // sockets, devices, etc.
-      }
-      entries.push({ name: d.name, path: path.join(dir, d.name), kind: isDir ? "directory" : "file" });
-    }
+    const listed = await Promise.all(dirents.map(async (d): Promise<FsEntry | null> => {
+      if (HIDDEN_ENTRIES.has(d.name)) return null;
+      if (!d.isDirectory() && !d.isFile() && !d.isSymbolicLink()) return null; // sockets, devices, etc.
+      const full = path.join(dir, d.name);
+      // stat follows symlinks, so a link to a folder lists as a folder.
+      const stat = await fsp.stat(full).catch(() => null);
+      const isDir = stat ? stat.isDirectory() : d.isDirectory();
+      return { name: d.name, path: full, kind: isDir ? "directory" : "file", mtimeMs: stat?.mtimeMs ?? 0 };
+    }));
+    const entries = listed.filter((e): e is FsEntry => e !== null);
     entries.sort((a, b) =>
       a.kind !== b.kind
         ? (a.kind === "directory" ? -1 : 1)
@@ -137,6 +246,19 @@ export function registerFsRoutes(app: Express) {
     const parent = path.dirname(dir);
     const body: FsListResponse = { path: dir, parent: parent === dir ? null : parent, entries };
     res.json(body);
+  }));
+
+  app.post("/api/fs/search", handle(async (req, res) => {
+    const body = req.body as Partial<FsSearchRequest>;
+    const query = typeof body?.query === "string" ? body.query.trim() : "";
+    if (!query) throw new HttpError(400, "query is required");
+    if (!Array.isArray(body.roots) || body.roots.length === 0) throw new HttpError(400, "roots are required");
+    const roots = body.roots.map(absolutePath);
+    // Stop walking the disk if the client gave up (a newer search replaced this one).
+    let aborted = false;
+    res.on("close", () => { if (!res.writableEnded) aborted = true; });
+    const result = await searchFolders({ roots, query, contents: !!body.contents }, () => aborted);
+    if (!aborted) res.json(result);
   }));
 
   app.get("/api/fs/read", handle(async (req, res) => {
@@ -157,7 +279,6 @@ export function registerFsRoutes(app: Express) {
   app.put("/api/fs/write", handle(async (req, res) => {
     const { content, expectedMtimeMs } = req.body as FsWriteRequest;
     const filePath = absolutePath(req.body?.path);
-    assertEditable(filePath);
     if (typeof content !== "string") throw new HttpError(400, "content must be a string");
 
     const current = await fsp.stat(filePath);
@@ -177,7 +298,6 @@ export function registerFsRoutes(app: Express) {
       throw new HttpError(400, "Enter a file name without folders");
     }
     const filePath = path.join(directory, name.trim());
-    assertEditable(filePath);
     // "wx" fails if the file already exists instead of overwriting it.
     await fsp.writeFile(filePath, content, { encoding: "utf8", flag: "wx" }).catch(err => {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new HttpError(409, "A file with that name already exists");

@@ -1,5 +1,5 @@
 appId: com.markdowneditor.app
-productName: Markdown Editor
+productName: GD Markdown Composer
 
 # Electron entry point: "main" in package.json (electron/main.cjs)
 
@@ -11,6 +11,7 @@ files:
   - dist/**/*
   - electron/main.cjs
   - electron/preload.cjs
+  - electron/icons/icon-256.png
   - package.json
 
 asar: true
@@ -34,6 +35,7 @@ extraResources:
 # macOS
 mac:
   category: public.app-category.productivity
+  icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-darwin-${arch}/"
       to: "."
@@ -46,6 +48,7 @@ mac:
 
 # Windows
 win:
+  icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-windows-${arch}/"
       to: "."
@@ -57,6 +60,7 @@ win:
 
 # Linux
 linux:
+  icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-linux-${arch}/"
       to: "."

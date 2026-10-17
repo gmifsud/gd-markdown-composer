@@ -98,3 +98,13 @@
     border-width: 1px;
   }
 }
+
+/* Brief highlight when jumping to a heading from the Outline. */
+@keyframes mdc-flash {
+  from { background-color: rgba(0, 127, 212, 0.18); }
+  to { background-color: transparent; }
+}
+.mdc-flash {
+  animation: mdc-flash 1.4s ease-out;
+  border-radius: 4px;
+}

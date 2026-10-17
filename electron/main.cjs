@@ -10,6 +10,10 @@ const http = require('http');
 // In dev (node electron/main.cjs) it is false.
 const isPacked = app.isPackaged;
 
+// Note: the data folder (%APPDATA%/rest-express on Windows) is named after
+// "name" in package.json, not the product name. Renaming the package would
+// move the database, zoom level and open folders/tabs to a new, empty folder.
+
 // Dev connects to the `bun run dev` server on PORT (default 5000).
 // The packaged app prefers a fixed, uncommon port so the page origin (and
 // with it localStorage: pinned/closed tabs) stays the same between launches,
@@ -303,7 +307,8 @@ async function createWindow() {
       sandbox: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
-    title: 'Markdown Editor',
+    title: 'GD Markdown Composer',
+    icon: path.join(__dirname, 'icons', 'icon-256.png'),
     show: false,
     backgroundColor: '#eef0f2',
     // Remove default frame on macOS for a native feel

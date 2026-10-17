@@ -47,9 +47,11 @@ export function useActiveUri(): string | null {
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-export type SidebarPanel = "explorer" | "documents";
+export type SidebarPanel = "explorer" | "documents" | "outline";
 /** Editor layout: source only, source and preview side by side, or preview only. */
 export type EditorMode = "edit" | "split" | "preview";
+/** Explorer order inside each folder (folders always come before files). */
+export type ExplorerSort = "name" | "modified";
 
 export interface WorkspaceState {
   folders: string[];
@@ -58,6 +60,11 @@ export interface WorkspaceState {
   expanded: string[];
   sidebar: { visible: boolean; width: number; panel: SidebarPanel };
   editorMode: EditorMode;
+  /** Layout for .drawio files, remembered separately (they usually want the diagram only). */
+  diagramMode: EditorMode;
+  explorer: { sort: ExplorerSort; showDates: boolean };
+  /** Let rendered markdown use the whole pane instead of a readable ~80-character column. */
+  previewFullWidth: boolean;
 }
 
 export const SIDEBAR_MIN_WIDTH = 160;
@@ -73,6 +80,9 @@ const initialState: WorkspaceState = {
   expanded: [],
   sidebar: { visible: true, width: SIDEBAR_DEFAULT_WIDTH, panel: "explorer" },
   editorMode: "split",
+  diagramMode: "preview",
+  explorer: { sort: "name", showDates: true },
+  previewFullWidth: false,
 };
 
 function loadState(): WorkspaceState {
@@ -84,6 +94,7 @@ function loadState(): WorkspaceState {
         ...initialState,
         ...parsed,
         sidebar: { ...initialState.sidebar, ...parsed.sidebar },
+        explorer: { ...initialState.explorer, ...parsed.explorer },
       };
     }
     // First run after the open-tabs change: keep previously pinned documents open.
@@ -104,7 +115,10 @@ type Action =
   | { type: "setExpanded"; path: string; expanded: boolean }
   | { type: "sidebar"; patch: Partial<WorkspaceState["sidebar"]> }
   | { type: "pruneDb"; existingIds: number[] }
-  | { type: "editorMode"; mode: EditorMode };
+  | { type: "editorMode"; mode: EditorMode }
+  | { type: "previewFullWidth"; value: boolean }
+  | { type: "diagramMode"; mode: EditorMode }
+  | { type: "explorer"; patch: Partial<WorkspaceState["explorer"]> };
 
 const clampWidth = (w: number) => Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w)));
 
@@ -153,6 +167,12 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       sidebar.width = clampWidth(sidebar.width);
       return { ...state, sidebar };
     }
+    case "explorer":
+      return { ...state, explorer: { ...state.explorer, ...action.patch } };
+    case "diagramMode":
+      return { ...state, diagramMode: action.mode };
+    case "previewFullWidth":
+      return { ...state, previewFullWidth: action.value };
     case "editorMode":
       return state.editorMode === action.mode ? state : { ...state, editorMode: action.mode };
     case "pruneDb": {
@@ -241,6 +261,9 @@ export function useWorkspaceActions() {
     setSidebar: (patch: Partial<WorkspaceState["sidebar"]>) => dispatch({ type: "sidebar", patch }),
     pruneDb: (existingIds: number[]) => dispatch({ type: "pruneDb", existingIds }),
     setEditorMode: (mode: EditorMode) => dispatch({ type: "editorMode", mode }),
+    setPreviewFullWidth: (value: boolean) => dispatch({ type: "previewFullWidth", value }),
+    setDiagramMode: (mode: EditorMode) => dispatch({ type: "diagramMode", mode }),
+    setExplorer: (patch: Partial<WorkspaceState["explorer"]>) => dispatch({ type: "explorer", patch }),
   };
 }
 

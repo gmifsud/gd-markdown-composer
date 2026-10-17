@@ -163,18 +163,19 @@ export function Lightbox({ title, onClose, pannable = true, children }: Lightbox
 }
 
 /** Hover button that opens a Lightbox; wraps the inline diagram or image. */
-export function Expandable({ title, renderFull, pannable, inline = false, children }: {
+export function Expandable({ title, renderFull, pannable, inline = false, className = "", children }: {
   title: string;
   renderFull(): ReactNode;
   pannable?: boolean;
   /** For images inside text: render as an inline box. */
   inline?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const Wrapper = inline ? "span" : "div";
   return (
-    <Wrapper className={`group/expand relative ${inline ? "inline-block max-w-full" : "block"}`}>
+    <Wrapper className={`group/expand relative ${inline ? "inline-block max-w-full" : "block"} ${className}`}>
       {children}
       <button
         type="button"

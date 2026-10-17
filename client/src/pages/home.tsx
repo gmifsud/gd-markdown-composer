@@ -100,7 +100,7 @@ export default function Home() {
           </SheetContent>
         </Sheet>
         <span className="font-semibold text-sm tracking-tight text-gray-800">
-          {activeUri ? "Editor" : "Markdown App"}
+          {activeUri ? "Editor" : "GD Markdown Composer"}
         </span>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">{content}</div>

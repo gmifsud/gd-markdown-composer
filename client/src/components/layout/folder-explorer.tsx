@@ -1,24 +1,33 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
 import {
   ChevronDown, ChevronRight, File, FileJson, FileText, Code2, Folder, FolderOpen, FolderPlus,
-  Loader2, RefreshCw, X, FilePlus, FolderMinus,
+  Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useFolderDialogs } from "@/components/layout/folder-dialogs";
-import { PathMenuItems, useTabsInFolder } from "@/components/layout/path-actions";
+import { PathMenuItems, useIsInside, useTabsInFolder } from "@/components/layout/path-actions";
+import { ExplorerSearchBox, FilteredTree, useExplorerSearch } from "@/components/layout/explorer-search";
+import { useDebounce } from "@/hooks/use-debounce";
 import { baseName, fsApi, fsKeys, useFsStatus } from "@/lib/fs-api";
-import { fileUri, folderColour, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
-import { editableTypeOf, type FsEntry } from "@shared/fs";
+import { fileUri, folderColour, useWorkspace, useWorkspaceActions, type ExplorerSort } from "@/lib/workspace";
+import { fileKindOf, type FsEntry, type FsSearchResult } from "@shared/fs";
 
 const INDENT = 12;
 
 function fileIcon(name: string) {
-  const type = editableTypeOf(name);
+  const type = fileKindOf(name);
   if (type === "json") return <FileJson className="w-3.5 h-3.5 shrink-0 text-blue-400" />;
   if (type === "yaml") return <Code2 className="w-3.5 h-3.5 shrink-0 text-purple-400" />;
   if (type === "md") return <FileText className="w-3.5 h-3.5 shrink-0 text-gray-300" />;
+  if (type === "drawio") return <Workflow className="w-3.5 h-3.5 shrink-0 text-orange-400" />;
   return <File className="w-3.5 h-3.5 shrink-0 text-[#858585]" />;
 }
 
@@ -29,7 +38,38 @@ export function FolderExplorer() {
   const { openFolder } = useFolderDialogs();
   const queryClient = useQueryClient();
 
-  const refreshAll = () => queryClient.invalidateQueries({ queryKey: ["fs-list"] });
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["fs-list"] });
+    queryClient.invalidateQueries({ queryKey: ["fs-search"] });
+  };
+
+  // Search: names always, contents when toggled on. Contents need 2+ characters.
+  const search = useExplorerSearch();
+  const query = useDebounce(search.query.trim(), 300);
+  const searching = query.length >= (search.contents ? 2 : 1);
+  const { data: found, isFetching: searchBusy, error: searchError } = useQuery({
+    queryKey: ["fs-search", state.folders, query, search.contents],
+    queryFn: ({ signal }) => fsApi.search({ roots: state.folders, query, contents: search.contents }, signal),
+    enabled: !!status?.enabled && searching && state.folders.length > 0,
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
+  const inside = useIsInside();
+  const resultsFor = (folder: string) => found?.results.filter(r => inside(r.path, folder)) ?? [];
+
+  const fileCount = found?.results.filter(r => r.kind === "file").length ?? 0;
+  const matchCount = found?.results.reduce((n, r) => n + r.contentMatches, 0) ?? 0;
+  const summary = !searching ? null
+    : searchError ? <span className="text-red-400">{(searchError as Error).message}</span>
+    : !found ? <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Searching…</span>
+    : (
+      <span className="flex items-center gap-1" data-testid="explorer-search-summary">
+        {searchBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+        {fileCount} file{fileCount === 1 ? "" : "s"}
+        {search.contents && ` · ${matchCount} match${matchCount === 1 ? "" : "es"}`}
+        {found.truncated && <span className="text-amber-400" title="Stopped early: too many results or files. Narrow the search."> · partial</span>}
+      </span>
+    );
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] text-[#cccccc] select-none overflow-hidden">
@@ -37,6 +77,7 @@ export function FolderExplorer() {
         <span className="text-[11px] font-semibold tracking-widest uppercase text-[#bbbbbb]">Explorer</span>
         {status?.enabled && (
           <div className="flex items-center gap-0.5">
+            <SortMenu />
             <button
               className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e]"
               onClick={refreshAll}
@@ -56,6 +97,8 @@ export function FolderExplorer() {
         )}
       </div>
 
+      {status?.enabled && state.folders.length > 0 && <ExplorerSearchBox summary={summary} />}
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden text-[13px] scroll-dark" role="tree" aria-label="Folders">
         {statusLoading ? null : !status?.enabled ? (
           <p className="px-4 py-3 text-[12px] text-[#858585]">
@@ -72,20 +115,32 @@ export function FolderExplorer() {
             </button>
           </div>
         ) : (
-          state.folders.map((folder, index) => <FolderRoot key={folder} folder={folder} index={index} />)
+          state.folders.map((folder, index) => (
+            <FolderRoot
+              key={folder}
+              folder={folder}
+              index={index}
+              filtered={searching && found ? { results: resultsFor(folder), query } : undefined}
+            />
+          ))
         )}
       </div>
     </div>
   );
 }
 
-function FolderRoot({ folder, index }: { folder: string; index: number }) {
+function FolderRoot({ folder, index, filtered }: {
+  folder: string;
+  index: number;
+  /** While searching: show only these results (and the folders leading to them). */
+  filtered?: { results: FsSearchResult[]; query: string };
+}) {
   const { state } = useWorkspace();
   const { setExpanded, removeFolder, close } = useWorkspaceActions();
   const { newFileIn } = useFolderDialogs();
   const queryClient = useQueryClient();
   const tabsInFolder = useTabsInFolder();
-  const expanded = state.expanded.includes(folder);
+  const expanded = !!filtered || state.expanded.includes(folder);
   const colour = folderColour(index);
 
   const remove = () => {
@@ -148,17 +203,63 @@ function FolderRoot({ folder, index }: { folder: string; index: number }) {
         </ContextMenuContent>
       </ContextMenu>
 
-      {expanded && <DirectoryChildren dir={folder} root={folder} depth={1} />}
+      {filtered
+        ? <FilteredTree root={folder} results={filtered.results} query={filtered.query} fileIcon={fileIcon} />
+        : expanded && <DirectoryChildren dir={folder} root={folder} depth={1} />}
     </div>
   );
 }
 
+/** Explorer header menu: sort order and whether modified dates show. */
+function SortMenu() {
+  const { state } = useWorkspace();
+  const { setExplorer } = useWorkspaceActions();
+  const { sort, showDates } = state.explorer;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e]"
+          title={sort === "name" ? "Sorted by name" : "Sorted by date modified"}
+          data-testid="button-explorer-sort"
+        >
+          {sort === "name" ? <ArrowDownAZ className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel className="text-[11px] text-gray-500 font-medium">Sort files and folders</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={sort} onValueChange={(v) => setExplorer({ sort: v as ExplorerSort })}>
+          <DropdownMenuRadioItem value="name" data-testid="sort-name">Name (A–Z)</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="modified" data-testid="sort-modified">Date modified (newest first)</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={showDates}
+          onCheckedChange={(checked) => setExplorer({ showDates: !!checked })}
+          data-testid="toggle-show-dates"
+        >
+          Show modified date and time
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function DirectoryChildren({ dir, root, depth }: { dir: string; root: string; depth: number }) {
+  const { state } = useWorkspace();
+  const sort = state.explorer.sort;
   const { data, isLoading, error } = useQuery({
     queryKey: fsKeys.list(dir),
     queryFn: () => fsApi.list(dir),
     staleTime: 30_000,
   });
+
+  // The server lists folders first, then by name; date order is applied here.
+  const entries = useMemo(() => {
+    if (!data || sort === "name") return data?.entries ?? [];
+    return [...data.entries].sort((a, b) =>
+      a.kind !== b.kind ? (a.kind === "directory" ? -1 : 1) : b.mtimeMs - a.mtimeMs);
+  }, [data, sort]);
 
   const pad = { paddingLeft: `${8 + depth * INDENT}px` };
   if (isLoading) {
@@ -172,7 +273,7 @@ function DirectoryChildren({ dir, root, depth }: { dir: string; root: string; de
   }
   return (
     <div role="group">
-      {data.entries.map(entry => <EntryRow key={entry.path} entry={entry} root={root} depth={depth} />)}
+      {entries.map(entry => <EntryRow key={entry.path} entry={entry} root={root} depth={depth} />)}
     </div>
   );
 }
@@ -221,6 +322,15 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
               </>
             )}
             <span className="flex-1 truncate">{entry.name}</span>
+            {!isDir && state.explorer.showDates && entry.mtimeMs > 0 && (
+              <span
+                className="shrink-0 ml-2 text-[10.5px] tabular-nums text-[#858585]"
+                title={`Modified ${format(entry.mtimeMs, "EEEE d MMMM yyyy, HH:mm:ss")}`}
+                data-testid="entry-modified-date"
+              >
+                {format(entry.mtimeMs, "dd/MM/yy HH:mm")}
+              </span>
+            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-60">

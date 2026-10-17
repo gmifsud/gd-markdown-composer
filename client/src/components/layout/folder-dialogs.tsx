@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { desktop, fsApi, fsKeys, useFsStatus, baseName, FsConflictError } from "@/lib/fs-api";
 import { fileUri, useWorkspaceActions } from "@/lib/workspace";
+import { markUnlocked } from "@/lib/unlocked-files";
 
 interface FolderDialogsValue {
   /** Native picker in the desktop app; a folder browser dialog otherwise. */
@@ -152,13 +153,23 @@ function FolderBrowserDialog({ open, onOpenChange, onChoose }: {
 
 // ── New file on disk ─────────────────────────────────────────────────────────
 
+// Used when the typed name has no extension. Typing a name with an extension
+// ("notes.txt", "build.ps1") always wins; "No extension" keeps the name as typed.
 const NEW_FILE_TYPES = [
-  { ext: ".md", label: "Markdown" },
-  { ext: ".json", label: "JSON" },
-  { ext: ".yaml", label: "YAML" },
+  { ext: ".md", label: "Markdown (.md)" },
+  { ext: ".json", label: "JSON (.json)" },
+  { ext: ".yaml", label: "YAML (.yaml)" },
+  { ext: ".drawio", label: "Draw.io (.drawio)" },
+  { ext: ".txt", label: "Text (.txt)" },
+  { ext: "", label: "No extension" },
 ] as const;
 
-const STARTER_CONTENT: Record<string, string> = { ".md": "", ".json": "{}\n", ".yaml": "" };
+const EMPTY_DRAWIO =
+  '<mxfile><diagram name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>\n';
+
+const STARTER_CONTENT: Record<string, string> = { ".json": "{}\n", ".drawio": EMPTY_DRAWIO };
+
+const hasExtension = (name: string) => /[^.]\.[^.\\/]+$/.test(name);
 
 function NewFileDialog({ directory, onClose }: { directory: string | null; onClose(): void }) {
   const queryClient = useQueryClient();
@@ -177,7 +188,7 @@ function NewFileDialog({ directory, onClose }: { directory: string | null; onClo
 
   const create = async () => {
     if (!directory || !name.trim()) return;
-    const fileName = /\.[a-z]+$/i.test(name.trim()) ? name.trim() : name.trim() + ext;
+    const fileName = hasExtension(name.trim()) ? name.trim() : name.trim() + ext;
     setBusy(true);
     try {
       const created = await fsApi.create({
@@ -188,6 +199,8 @@ function NewFileDialog({ directory, onClose }: { directory: string | null; onClo
       await queryClient.invalidateQueries({ queryKey: fsKeys.list(directory) });
       setExpanded(directory, true);
       onClose();
+      // A file you just created opens ready to edit, whatever its type.
+      markUnlocked(created.path);
       open(fileUri(created.path));
     } catch (err) {
       setBusy(false);
@@ -210,7 +223,7 @@ function NewFileDialog({ directory, onClose }: { directory: string | null; onClo
             autoFocus
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="file name"
+            placeholder="name or name.ext"
             data-testid="input-new-file-name"
           />
           <select
@@ -220,7 +233,7 @@ function NewFileDialog({ directory, onClose }: { directory: string | null; onClo
             aria-label="File type"
             data-testid="select-new-file-type"
           >
-            {NEW_FILE_TYPES.map(t => <option key={t.ext} value={t.ext}>{t.label} ({t.ext})</option>)}
+            {NEW_FILE_TYPES.map(t => <option key={t.ext || "none"} value={t.ext}>{t.label}</option>)}
           </select>
         </form>
         <DialogFooter>

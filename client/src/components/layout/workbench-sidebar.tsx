@@ -1,7 +1,9 @@
-import { useRef, type KeyboardEvent, type PointerEvent } from "react";
-import { Files, Library } from "lucide-react";
+import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { Files, Library, ListTree } from "lucide-react";
 import { FolderExplorer } from "@/components/layout/folder-explorer";
 import { DocumentsPanel } from "@/components/layout/documents-panel";
+import { OutlinePanel } from "@/components/layout/outline-panel";
+import { focusExplorerSearch } from "@/components/layout/explorer-search";
 import {
   SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
   useWorkspace, useWorkspaceActions, type SidebarPanel,
@@ -10,6 +12,7 @@ import {
 const PANELS: { id: SidebarPanel; label: string; icon: JSX.Element }[] = [
   { id: "explorer", label: "Explorer (folders)", icon: <Files className="w-5 h-5" /> },
   { id: "documents", label: "Documents by type", icon: <Library className="w-5 h-5" /> },
+  { id: "outline", label: "Outline (headings of the open Markdown file)", icon: <ListTree className="w-5 h-5" /> },
 ];
 
 /** Left activity bar: picks the sidebar panel; clicking the active one hides the sidebar. */
@@ -17,6 +20,20 @@ export function ActivityBar() {
   const { state } = useWorkspace();
   const { setSidebar } = useWorkspaceActions();
   const { visible, panel } = state.sidebar;
+
+  // Ctrl/Cmd+Shift+F: search file contents in the open folders.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSidebar({ visible: true, panel: "explorer" });
+        // Wait for the explorer to mount before focusing its search box.
+        setTimeout(() => focusExplorerSearch(true), 0);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setSidebar]);
 
   return (
     <div className="flex flex-col items-center py-1 gap-1 w-11 shrink-0 bg-[#333333] border-r border-[#252526]">
@@ -73,7 +90,7 @@ export function WorkbenchSidebar() {
 
   return (
     <div className="relative h-full shrink-0 border-r border-[#252526]" style={{ width }} data-testid="sidebar">
-      {panel === "explorer" ? <FolderExplorer /> : <DocumentsPanel />}
+      {panel === "explorer" ? <FolderExplorer /> : panel === "documents" ? <DocumentsPanel /> : <OutlinePanel />}
       <div
         role="separator"
         aria-orientation="vertical"
