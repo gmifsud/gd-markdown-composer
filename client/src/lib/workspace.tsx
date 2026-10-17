@@ -48,6 +48,8 @@ export function useActiveUri(): string | null {
 // ── State ────────────────────────────────────────────────────────────────────
 
 export type SidebarPanel = "explorer" | "documents";
+/** Editor layout: source only, source and preview side by side, or preview only. */
+export type EditorMode = "edit" | "split" | "preview";
 
 export interface WorkspaceState {
   folders: string[];
@@ -55,6 +57,7 @@ export interface WorkspaceState {
   pinned: string[];
   expanded: string[];
   sidebar: { visible: boolean; width: number; panel: SidebarPanel };
+  editorMode: EditorMode;
 }
 
 export const SIDEBAR_MIN_WIDTH = 160;
@@ -69,6 +72,7 @@ const initialState: WorkspaceState = {
   pinned: [],
   expanded: [],
   sidebar: { visible: true, width: SIDEBAR_DEFAULT_WIDTH, panel: "explorer" },
+  editorMode: "split",
 };
 
 function loadState(): WorkspaceState {
@@ -99,7 +103,8 @@ type Action =
   | { type: "removeFolder"; path: string }
   | { type: "setExpanded"; path: string; expanded: boolean }
   | { type: "sidebar"; patch: Partial<WorkspaceState["sidebar"]> }
-  | { type: "pruneDb"; existingIds: number[] };
+  | { type: "pruneDb"; existingIds: number[] }
+  | { type: "editorMode"; mode: EditorMode };
 
 const clampWidth = (w: number) => Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w)));
 
@@ -148,6 +153,8 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       sidebar.width = clampWidth(sidebar.width);
       return { ...state, sidebar };
     }
+    case "editorMode":
+      return state.editorMode === action.mode ? state : { ...state, editorMode: action.mode };
     case "pruneDb": {
       const existing = new Set(action.existingIds.map(dbUri));
       const keep = (u: string) => !u.startsWith("db:") || existing.has(u);
@@ -233,6 +240,7 @@ export function useWorkspaceActions() {
     setExpanded: (path: string, expanded: boolean) => dispatch({ type: "setExpanded", path, expanded }),
     setSidebar: (patch: Partial<WorkspaceState["sidebar"]>) => dispatch({ type: "sidebar", patch }),
     pruneDb: (existingIds: number[]) => dispatch({ type: "pruneDb", existingIds }),
+    setEditorMode: (mode: EditorMode) => dispatch({ type: "editorMode", mode }),
   };
 }
 

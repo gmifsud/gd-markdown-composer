@@ -44,7 +44,7 @@ export function DocumentsPanel() {
         <span className="text-[11px] font-semibold tracking-widest uppercase text-[#bbbbbb]">Documents</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto text-[13px]" data-testid="documents-panel">
+      <div className="flex-1 overflow-y-auto text-[13px] scroll-dark" data-testid="documents-panel">
         {isLoading ? (
           <div className="flex items-center gap-2 px-4 py-3 text-[#858585]">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />

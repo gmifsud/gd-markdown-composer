@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import { useLocation } from "wouter";
+import { DiagramBlock, DIAGRAM_LANGUAGES } from "@/components/editor/diagrams";
 
 // Heading ids get a prefix (as on GitHub) so a heading like "# Root" can't
 // collide with ids used by the app itself. `#section` links are mapped to it.
@@ -63,7 +64,30 @@ function PreviewLink({ href, children, node: _node, ...rest }: LinkProps) {
   );
 }
 
-const components: Components = { a: PreviewLink };
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: unknown };
+  children?: HastNode[];
+}
+
+/** ```mermaid, ```plantuml/```puml and ```drawio blocks render as diagrams; other code stays code. */
+function PreviewPre({ node, children, ...rest }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
+  const code = (node as HastNode | undefined)?.children?.[0];
+  if (code?.type === "element" && code.tagName === "code") {
+    const classes = Array.isArray(code.properties?.className) ? (code.properties.className as string[]) : [];
+    const lang = classes.find(c => c.startsWith("language-"))?.slice("language-".length).toLowerCase();
+    const kind = lang ? DIAGRAM_LANGUAGES[lang as keyof typeof DIAGRAM_LANGUAGES] : undefined;
+    if (kind) {
+      const text = (code.children ?? []).map(c => c.value ?? "").join("").replace(/\n$/, "");
+      return <DiagramBlock kind={kind} code={text} />;
+    }
+  }
+  return <pre {...rest}>{children}</pre>;
+}
+
+const components: Components = { a: PreviewLink, pre: PreviewPre };
 
 interface MarkdownPreviewProps {
   content: string;

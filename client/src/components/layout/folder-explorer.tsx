@@ -56,7 +56,7 @@ export function FolderExplorer() {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden text-[13px]" role="tree" aria-label="Folders">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden text-[13px] scroll-dark" role="tree" aria-label="Folders">
         {statusLoading ? null : !status?.enabled ? (
           <p className="px-4 py-3 text-[12px] text-[#858585]">
             Opening folders is available in the desktop app and when running locally.

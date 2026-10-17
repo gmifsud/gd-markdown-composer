@@ -84,6 +84,8 @@ function startServer() {
       PORT_FALLBACK: '1',
       // Opening folders from disk is a desktop feature.
       FS_ACCESS: '1',
+      // Shipped by electron-builder.yml extraResources (fetched by script/fetch-vendor.mjs).
+      PLANTUML_JAR: path.join(process.resourcesPath, 'plantuml', 'plantuml.jar'),
       SQLITE_PATH: resolveSqlitePath(),
     };
 

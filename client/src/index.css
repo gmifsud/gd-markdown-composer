@@ -49,19 +49,52 @@
     @apply font-sans antialiased bg-background text-foreground overflow-hidden selection:bg-black/10;
   }
 
-  /* Custom elegant scrollbar */
+  /* Scrollbars: wide enough to grab and dark enough to see on white.
+     The thumb is drawn 6px wide inside a 12px track (transparent border). */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 12px;
+    height: 12px;
   }
   ::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(0, 0, 0, 0.04);
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(0,0,0,0.1);
-    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.38);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+    min-height: 32px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(0,0,0,0.2);
+    background: rgba(0, 0, 0, 0.55);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background: rgba(0, 0, 0, 0.7);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Dark panels (explorer, documents). */
+  .scroll-dark::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .scroll-dark::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.35);
+    background-clip: content-box;
+  }
+  .scroll-dark::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.55);
+    background-clip: content-box;
+  }
+
+  /* Slim horizontal bars for the tab rows. */
+  .scroll-thin::-webkit-scrollbar {
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    border-width: 1px;
   }
 }

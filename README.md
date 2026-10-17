@@ -36,6 +36,7 @@ A web-based document editor with support for **Markdown**, **JSON**, and **YAML*
 
 - **Bun** 1.1 or later — [install instructions](https://bun.com/docs/installation)
 - **PostgreSQL** 14+ — only required when `DB_TYPE=postgres`
+- **Java** 11+ — only required to render PlantUML diagrams (rendered locally; set `JAVA_HOME` or put `java` on `PATH`)
 
 ---
 
@@ -66,6 +67,14 @@ cd <repository-folder>
 ```bash
 bun install
 ```
+
+Then fetch the diagram renderers that are too large to commit (PlantUML jar and the diagrams.net viewer; pinned and checksum-verified, saved to gitignored folders):
+
+```bash
+bun run fetch:vendor
+```
+
+Markdown previews render ` ```mermaid `, ` ```plantuml ` / ` ```puml ` and ` ```drawio ` (diagram XML) code blocks as diagrams. Nothing is sent to an outside service.
 
 ### 3. Configure environment variables
 

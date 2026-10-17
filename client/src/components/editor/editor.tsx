@@ -1,12 +1,15 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
+import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import { parseAllDocuments } from "yaml";
-import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap, Lock } from "lucide-react";
+import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap, Lock, PenLine, Columns2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
 import { useAutosave, type Saver } from "@/hooks/use-autosave";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
+import { useWorkspace, useWorkspaceActions, type EditorMode } from "@/lib/workspace";
 
 /** What the editor shows and how it saves: a database document or a file on disk. */
 export interface EditorSource {
@@ -68,12 +71,45 @@ const DOWNLOAD_TYPES = {
 
 const noopSave: Saver = async () => {};
 
+const MODES: { mode: EditorMode; label: string; icon: JSX.Element }[] = [
+  { mode: "edit", label: "Edit only", icon: <PenLine className="w-3.5 h-3.5" /> },
+  { mode: "split", label: "Edit and preview side by side", icon: <Columns2 className="w-3.5 h-3.5" /> },
+  { mode: "preview", label: "Preview only", icon: <Eye className="w-3.5 h-3.5" /> },
+];
+
+/** Segmented control for the editor layout; the choice applies to every document. */
+function ModeSwitch({ mode, onChange }: { mode: EditorMode; onChange(mode: EditorMode): void }) {
+  return (
+    <div className="hidden sm:flex items-center rounded-full bg-gray-100 p-0.5" role="radiogroup" aria-label="Editor layout">
+      {MODES.map(m => (
+        <button
+          key={m.mode}
+          role="radio"
+          aria-checked={mode === m.mode}
+          title={m.label}
+          onClick={() => onChange(m.mode)}
+          className={`flex items-center justify-center w-8 h-7 rounded-full transition-colors ${
+            mode === m.mode ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-800"
+          }`}
+          data-testid={`mode-${m.mode}`}
+        >
+          {m.icon}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Mount with a `key` per document: state is initialised from the source once. */
 export function Editor({ source }: EditorProps) {
   const [content, setContent] = useState(source.content);
   const [title, setTitle] = useState(source.title);
   const isMobile = useIsMobile();
   const { toast } = useToast();
+  const { state: workspace } = useWorkspace();
+  const { setEditorMode } = useWorkspaceActions();
+  const mode = workspace.editorMode;
+  const splitGroup = useRef<ImperativePanelGroupHandle>(null);
 
   const readOnly = !source.save;
   const isPlainText = source.fileType === "text";
@@ -148,6 +184,43 @@ export function Editor({ source }: EditorProps) {
     </div>
   );
 
+  const sourcePane = (
+    <div className="flex-1 h-full flex flex-col min-h-0 min-w-0" data-testid="source-pane">
+      <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
+        {isStructured ? formatLabel : "Markdown"}
+      </div>
+      <textarea
+        className={`flex-1 resize-none p-6 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
+          analysis.error ? "border-l-2 border-red-500" : ""
+        }`}
+        value={content}
+        onChange={e => setContent(e.target.value)}
+        readOnly={readOnly}
+        placeholder={placeholder}
+        spellCheck={false}
+        data-testid="editor-textarea"
+      />
+    </div>
+  );
+
+  const previewPane = (
+    <div className="flex-1 h-full flex flex-col min-h-0 min-w-0 bg-[#fafafa]" data-testid="preview-pane">
+      <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
+        {isStructured ? "Formatted" : "Preview"}
+      </div>
+      <div className="flex-1 overflow-y-auto p-6 md:p-8">
+        {isStructured ? structuredPreview : (
+          <MarkdownPreview
+            content={content}
+            className={`prose prose-sm md:prose-base prose-slate max-w-[80ch] prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100 ${
+              mode === "preview" ? "mx-auto" : ""
+            }`}
+          />
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-white shadow-sm ring-1 ring-black/[0.03] z-10 m-0 md:m-4 md:rounded-2xl overflow-hidden">
       {/* Editor Header */}
@@ -172,6 +245,7 @@ export function Editor({ source }: EditorProps) {
           </div>
         )}
         <div className="flex items-center gap-3 md:gap-5">
+          {!isPlainText && !isMobile && <ModeSwitch mode={mode} onChange={setEditorMode} />}
           {isStructured && analysis.error && (
             <span className="text-[11px] md:text-xs font-medium text-red-500 items-center gap-1.5 hidden sm:flex" title={analysis.error}>
               <AlertCircle className="w-3.5 h-3.5" />
@@ -252,38 +326,26 @@ export function Editor({ source }: EditorProps) {
             data-testid="editor-textarea"
           />
         ) : !isMobile ? (
-          <div className="flex flex-1 min-h-0">
-            <div className="flex-1 flex flex-col min-h-0 border-r border-gray-100/80 group">
-              <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-                {isStructured ? formatLabel : "Markdown"}
-              </div>
-              <textarea
-                className={`flex-1 resize-none p-6 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
-                  analysis.error ? "border-l-2 border-red-500" : ""
-                }`}
-                value={content}
-                onChange={e => setContent(e.target.value)}
-                readOnly={readOnly}
-                placeholder={placeholder}
-                spellCheck={false}
-                data-testid="editor-textarea"
+          mode === "edit" ? sourcePane
+          : mode === "preview" ? previewPane
+          : (
+            // The split position is saved in localStorage by autoSaveId.
+            <ResizablePanelGroup direction="horizontal" autoSaveId="mdc-editor-split" ref={splitGroup} className="flex-1 min-h-0">
+              <ResizablePanel defaultSize={50} minSize={15} className="flex flex-col min-h-0">
+                {sourcePane}
+              </ResizablePanel>
+              <ResizableHandle
+                withHandle
+                className="w-1.5 bg-gray-100 hover:bg-[#007fd4]/50 data-[resize-handle-state=drag]:bg-[#007fd4]/70 transition-colors"
+                onDoubleClick={() => splitGroup.current?.setLayout([50, 50])}
+                title="Drag to resize · double-click to reset"
+                data-testid="split-handle"
               />
-            </div>
-
-            <div className="flex-1 flex flex-col min-h-0 bg-[#fafafa]">
-              <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-                {isStructured ? "Formatted" : "Preview"}
-              </div>
-              <div className="flex-1 overflow-y-auto p-6 md:p-8">
-                {isStructured ? structuredPreview : (
-                  <MarkdownPreview
-                    content={content}
-                    className="prose prose-sm md:prose-base prose-slate max-w-[80ch] prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100"
-                  />
-                )}
-              </div>
-            </div>
-          </div>
+              <ResizablePanel defaultSize={50} minSize={15} className="flex flex-col min-h-0">
+                {previewPane}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          )
         ) : (
           <div className="flex flex-1 flex-col min-h-0 bg-white">
             <Tabs defaultValue="edit" className="flex-1 flex flex-col min-h-0">

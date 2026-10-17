@@ -31,7 +31,7 @@ class HttpError extends Error {
 
 // Requests must come from this machine, name a loopback host (blocks DNS
 // rebinding) and carry the client header (blocks cross-site simple requests).
-function guard(req: Request, res: Response, next: NextFunction) {
+export function localOnlyGuard(req: Request, res: Response, next: NextFunction) {
   const remote = req.socket.remoteAddress ?? "";
   const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
   if (!LOOPBACK_ADDRESSES.has(remote) || !LOOPBACK_HOSTNAMES.has(hostname)) {
@@ -114,7 +114,7 @@ export function registerFsRoutes(app: Express) {
     return;
   }
 
-  app.use("/api/fs", guard);
+  app.use("/api/fs", localOnlyGuard);
 
   app.get("/api/fs/list", handle(async (req, res) => {
     const dir = absolutePath(req.query.path);

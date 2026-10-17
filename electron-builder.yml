@@ -20,6 +20,12 @@ asar: true
 asarUnpack:
   - dist/**/*
 
+# PlantUML jar (run with the user's Java), fetched by script/fetch-vendor.mjs.
+extraResources:
+  - from: "vendor/plantuml/"
+    to: "plantuml"
+    filter: ["plantuml.jar"]
+
 # Bundle the per-platform Bun runtime that the server needs (bun:sqlite).
 # Paths match the folders written by script/fetch-bun.mjs. electron-builder's
 # ${os} macro expands to win/mac/linux, which does not match those names, so
