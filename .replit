@@ -1,9 +1,10 @@
-modules = ["nodejs-20", "web", "postgresql-16"]
-run = "npm run dev"
+modules = ["bun-1.1", "web", "postgresql-16"]
+run = "bun run dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
 [nix]
 channel = "stable-24_05"
+packages = ["bun"]
 
 [[ports]]
 localPort = 5000
@@ -14,8 +15,8 @@ PORT = "5000"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "./dist/index.cjs"]
-build = ["npm", "run", "build"]
+run = ["bun", "./dist/index.js"]
+build = ["bun", "run", "build"]
 
 [workflows]
 runButton = "Project"
@@ -35,5 +36,5 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
+args = "bun run dev"
 waitForPort = 5000

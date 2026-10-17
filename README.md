@@ -24,18 +24,17 @@ A web-based document editor with support for **Markdown**, **JSON**, and **YAML*
 | Routing | Wouter |
 | Data fetching | TanStack Query v5 |
 | Forms | React Hook Form + Zod |
-| Backend | Express 5, TypeScript, tsx |
-| Database | PostgreSQL via Drizzle ORM |
+| Backend | Express 5, TypeScript, Bun runtime |
+| Database | SQLite (via `bun:sqlite`) **or** PostgreSQL via Drizzle ORM |
 | Schema / validation | Drizzle-Zod, Zod |
-| Web build | Vite (client) + esbuild (server) |
-| Desktop | Electron 41 + electron-builder |
+| Web build | Vite (client) + `Bun.build` (server) |
+| Desktop | Electron 41 + electron-builder (bundles Bun) |
 
 ---
 
 ## Prerequisites
 
-- **Node.js** 20 or later
-- **npm** 10 or later
+- **Bun** 1.1 or later — [install instructions](https://bun.com/docs/installation)
 - **PostgreSQL** 14+ — only required when `DB_TYPE=postgres`
 
 ---
@@ -46,7 +45,7 @@ The app supports two database backends, switchable via the `DB_TYPE` environment
 
 | `DB_TYPE` | Backend | Notes |
 |---|---|---|
-| `sqlite` *(default)* | SQLite file (`./data/editor.db`) | Zero setup — works out of the box |
+| `sqlite` *(default)* | SQLite file (`./data/editor.db`) via `bun:sqlite` | Zero setup — works out of the box |
 | `postgres` | PostgreSQL via `DATABASE_URL` | Requires a running PostgreSQL server |
 
 You can also override the SQLite file location with `SQLITE_PATH=./my/custom/path.db`.
@@ -65,7 +64,7 @@ cd <repository-folder>
 ### 2. Install dependencies
 
 ```bash
-npm install
+bun install
 ```
 
 ### 3. Configure environment variables
@@ -95,13 +94,13 @@ DATABASE_URL=postgresql://user:password@localhost:5432/markdown_editor
 SQLite creates its table automatically on first start. PostgreSQL requires this step:
 
 ```bash
-DB_TYPE=postgres npm run db:push
+bun run db:push
 ```
 
 ### 5. Start the development server
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 This starts a single process that serves both the Express API (port 5000) and the Vite dev server with HMR. Open your browser at:
@@ -110,7 +109,9 @@ This starts a single process that serves both the Express API (port 5000) and th
 http://localhost:5000
 ```
 
-> The Vite frontend proxies API requests to Express automatically — no separate ports or proxy configuration is needed.
+> The Vite frontend proxies API requests to Express automatically — no separate ports or proxy configuration are needed.
+
+> `bun --hot` does **not** type-check. Run `bun run check` separately (it's wired to `tsc --noEmit`).
 
 ---
 
@@ -131,11 +132,12 @@ http://localhost:5000
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start development server (Express + Vite HMR) |
-| `npm run build` | Build for production (outputs to `dist/`) |
-| `npm run start` | Run the production build |
-| `npm run check` | TypeScript type-check the entire project |
-| `npm run db:push` | Apply the Drizzle schema to the database |
+| `bun run dev` | Start the development server (Express + Vite HMR) |
+| `bun run build` | Build for production (outputs to `dist/`) |
+| `bun run start` | Run the production build |
+| `bun run check` | TypeScript type-check the entire project |
+| `bun run db:push` | Apply the Drizzle schema to the database |
+| `bun run electron-dev` | Launch Electron with the dev server |
 
 ---
 
@@ -144,15 +146,15 @@ http://localhost:5000
 ### 1. Build the application
 
 ```bash
-npm run build
+bun run build
 ```
 
 This runs two steps in sequence:
 
 1. **Client** — Vite compiles and bundles the React frontend into `dist/public/`
-2. **Server** — esbuild compiles and bundles the Express server into `dist/index.cjs`
+2. **Server** — `Bun.build` bundles the Express server into `dist/index.js` (ESM)
 
-The final `dist/` folder is self-contained and only requires Node.js and a PostgreSQL database to run.
+The final `dist/` folder is self-contained and only requires a Bun runtime and (optionally) a PostgreSQL database to run.
 
 ### 2. Set production environment variables
 
@@ -167,13 +169,13 @@ NODE_ENV=production
 ### 3. Apply the database schema (first deploy only)
 
 ```bash
-npm run db:push
+bun run db:push
 ```
 
 ### 4. Start the production server
 
 ```bash
-npm run start
+bun run start
 ```
 
 The server listens on port **5000** by default and serves both the API and the compiled frontend assets from `dist/public/`.
@@ -184,7 +186,9 @@ The server listens on port **5000** by default and serves both the API and the c
 
 The app can be packaged and run as a native desktop application using Electron. When packaged, no separate browser is required — everything runs inside a standalone window.
 
-**How it works:** Electron starts the bundled Express server as a child process, waits for it to respond, then opens a native window pointing at `http://localhost:5000`. External links are opened in the system browser.
+**How it works:** Electron starts the bundled Express server as a child process (using the Bun runtime bundled inside the app), waits for it to respond, then opens a native window pointing at `http://localhost:5000`. External links are opened in the system browser.
+
+> **Why bundle Bun?** The server uses `bun:sqlite`, a built-in module that is unavailable in the Node binary that Electron embeds. The packaged app therefore ships a per-platform Bun runtime in its `resources/` folder (`bin/bun-<os>-<arch>/`). When upgrading Bun, re-run `bun script/fetch-bun.mjs --all` and rebuild. Each platform adds ~80–100 MB on top of Electron + Chromium.
 
 With the default SQLite backend, the packaged Electron app is **fully self-contained** — no database server is needed. All data is stored in a local `editor.db` file next to the app. To use PostgreSQL instead, set `DB_TYPE=postgres` and `DATABASE_URL` before launching.
 
@@ -192,13 +196,13 @@ With the default SQLite backend, the packaged Electron app is **fully self-conta
 
 ### Running the Desktop App in Development
 
-Ensure your `.env` is configured and `npm run db:push` has been run, then:
+Ensure your `.env` is configured and `bun run db:push` has been run (Postgres only), then:
 
 ```bash
-node electron/dev.mjs
+bun run electron-dev
 ```
 
-This automatically starts the Express + Vite dev server and then opens the Electron window once the server is ready. Press **Ctrl-C** to shut everything down.
+This automatically starts the Express + Vite dev server (under Bun) and then opens the Electron window once the server is ready. Press **Ctrl-C** to shut everything down.
 
 ---
 
@@ -207,12 +211,24 @@ This automatically starts the Express + Vite dev server and then opens the Elect
 #### 1. Build the web application
 
 ```bash
-npm run build
+bun run build
 ```
 
-This produces the compiled server (`dist/index.cjs`) and the compiled frontend (`dist/public/`).
+This produces the compiled server (`dist/index.js`) and the compiled frontend (`dist/public/`).
 
-#### 2. (Optional) Add app icons
+#### 2. Ensure the platform-appropriate Bun binary is present
+
+The `bin/` directory is git-ignored. After cloning, populate it once:
+
+```bash
+# Current platform only:
+bun script/fetch-bun.mjs
+
+# All desktop platforms:
+bun script/fetch-bun.mjs --all
+```
+
+#### 3. (Optional) Add app icons
 
 Place platform-specific icons in the `electron/icons/` directory before building:
 
@@ -224,27 +240,27 @@ Place platform-specific icons in the `electron/icons/` directory before building
 
 If icons are omitted, electron-builder uses a default Electron icon.
 
-#### 3. Package the app
+#### 4. Package the app
 
 ```bash
 # Current platform only
-npx electron-builder --config electron-builder.yml
+bunx electron-builder --config electron-builder.yml
 
 # Windows installer (.exe via NSIS)
-npx electron-builder --win --config electron-builder.yml
+bunx electron-builder --win --config electron-builder.yml
 
 # macOS disk image (.dmg)
-npx electron-builder --mac --config electron-builder.yml
+bunx electron-builder --mac --config electron-builder.yml
 
 # Linux AppImage
-npx electron-builder --linux --config electron-builder.yml
+bunx electron-builder --linux --config electron-builder.yml
 ```
 
 > **Cross-compilation note:** Building a Windows installer from macOS/Linux (or vice versa) requires additional setup. For reliable cross-platform builds, run each command on its target OS, or use a CI pipeline (GitHub Actions, etc.).
 
 The packaged distributable is written to `electron-dist/`.
 
-#### 4. Distribute the environment variables
+#### 5. Distribute the environment variables
 
 The packaged app still connects to PostgreSQL via `DATABASE_URL`. The end user must set this variable before launching the app, or you can embed a `.env` file by adding it to the `files` array in `electron-builder.yml`.
 
@@ -254,11 +270,12 @@ The packaged app still connects to PostgreSQL via `DATABASE_URL`. The end user m
 
 | Command | Description |
 |---|---|
-| `node electron/dev.mjs` | Start dev server + Electron window together |
-| `npx electron-builder --config electron-builder.yml` | Package for the current platform |
-| `npx electron-builder --win --config electron-builder.yml` | Package for Windows |
-| `npx electron-builder --mac --config electron-builder.yml` | Package for macOS |
-| `npx electron-builder --linux --config electron-builder.yml` | Package for Linux |
+| `bun run electron-dev` | Start dev server + Electron window together |
+| `bunx electron-builder --config electron-builder.yml` | Package for the current platform |
+| `bunx electron-builder --win --config electron-builder.yml` | Package for Windows |
+| `bunx electron-builder --mac --config electron-builder.yml` | Package for macOS |
+| `bunx electron-builder --linux --config electron-builder.yml` | Package for Linux |
+| `bun script/fetch-bun.mjs --all` | Refresh bundled Bun binaries for every platform |
 
 ---
 
@@ -266,6 +283,11 @@ The packaged app still connects to PostgreSQL via `DATABASE_URL`. The end user m
 
 ```
 .
+├── bin/                    # Per-platform Bun binaries (gitignored; populated by script/fetch-bun.mjs)
+│   ├── bun-darwin-x64/bun
+│   ├── bun-darwin-arm64/bun
+│   ├── bun-linux-x64/bun
+│   └── bun-windows-x64/bun.exe
 ├── client/                  # Frontend source (React + Vite)
 │   └── src/
 │       ├── components/
@@ -279,15 +301,17 @@ The packaged app still connects to PostgreSQL via `DATABASE_URL`. The end user m
 │   ├── index.ts             # Server entry point
 │   ├── routes.ts            # API route handlers
 │   ├── storage.ts           # Database access layer (Drizzle)
+│   ├── schema.sqlite.ts     # SQLite Drizzle schema (used by bun:sqlite)
 │   └── vite.ts              # Vite dev-server integration
 ├── electron/                # Electron desktop app
 │   ├── main.cjs             # Electron main process (CommonJS)
 │   ├── dev.mjs              # Dev launcher (starts server + Electron)
 │   └── icons/               # App icons (icns / ico / png)
 ├── shared/
-│   └── schema.ts            # Drizzle table schema + Zod types (shared by client & server)
+│   └── schema.ts            # Drizzle table schema + Zod types (Postgres; shared by client & server)
 ├── script/
-│   └── build.ts             # Production build script
+│   ├── build.mjs            # Production build (Vite + Bun.build)
+│   └── fetch-bun.mjs        # Helper to populate bin/ with the Bun runtime
 ├── electron-builder.yml     # electron-builder packaging configuration
 ├── migrations/              # Drizzle-generated SQL migrations
 ├── drizzle.config.ts        # Drizzle Kit configuration

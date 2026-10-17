@@ -7,6 +7,8 @@
 
 import { spawn } from 'child_process';
 import http from 'http';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const PORT = process.env.PORT || 5000;
 
@@ -26,10 +28,11 @@ function waitForServer(port, attempts = 60, interval = 500) {
   });
 }
 
-// 1. Start the web dev server (Express + Vite)
-const devServer = spawn('npm', ['run', 'dev'], {
+// 1. Start the web dev server (Express + Vite) via Bun
+const bunCmd = process.platform === 'win32' ? 'bun.exe' : 'bun';
+
+const devServer = spawn(bunCmd, ['run', 'dev'], {
   stdio: 'inherit',
-  shell: true,
   env: { ...process.env, NODE_ENV: 'development' },
 });
 
@@ -45,16 +48,19 @@ waitForServer(PORT)
   .then(() => {
     console.log('[electron-dev] Server ready — launching Electron window.');
 
-    const electronPath = new URL('../node_modules/.bin/electron', import.meta.url).pathname;
+    // On Windows, the .cmd wrapper is required in some contexts; using shell true
+    // avoids EINVAL when path has invalid format and allows PATH lookup.
+    const electronCmd = process.platform === 'win32' ? 'electron.cmd' : 'electron';
 
-    const electronProc = spawn(electronPath, ['electron/main.cjs'], {
+    const electronProc = spawn(electronCmd, ['electron/main.cjs'], {
       stdio: 'inherit',
+      shell: true,
       env: { ...process.env, NODE_ENV: 'development' },
     });
 
     electronProc.on('error', (err) => {
       console.error('Failed to start Electron:', err.message);
-      console.error('Make sure electron is installed: npm install electron --save-dev');
+      console.error('Make sure electron is installed: bun install');
     });
 
     electronProc.on('close', (code) => {

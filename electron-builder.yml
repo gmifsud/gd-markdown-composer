@@ -15,6 +15,14 @@ files:
 
 asar: true
 
+# Bundle the per-platform Bun runtime that the server needs (bun:sqlite).
+# electron-builder matches the OS/arch of the build host, so we ship only
+# the binary for the target platform.
+extraResources:
+  - from: "bin/bun-${os}-${arch}/"
+    to: "."
+    filter: ["bun", "bun.exe"]
+
 # macOS
 mac:
   category: public.app-category.productivity

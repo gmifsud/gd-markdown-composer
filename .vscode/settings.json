@@ -1,0 +1,18 @@
+{
+  "git.autorefresh": false,
+  "gitlens.advanced.repositorySearchDepth": 0,
+  "gitlens.currentLine.enabled": false,
+  "gitlens.codeLens.enabled": false,
+  "gitlens.views.remotes.avatars": false,
+  "gitlens.statusBar.enabled": false,
+  "git.autofetch": false,
+  "gitlens.advanced.fileHistoryFollowsRenames": false,
+  "git.autoRepositoryDetection": "openEditors",
+  "git.fetchOnPull": false,
+  "gitlens.views.repositories.autoRefresh": false,
+  "git.untrackedChanges": "separate",
+  "git.showProgress": false,
+  "gitlens.views.branches.avatars": false,
+  "scm.autoReveal": false,
+  "scm.diffDecorationsGutterAction": "none"
+}

@@ -1,6 +1,6 @@
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
-import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
-import BetterSqlite3 from "better-sqlite3";
+import { drizzle as drizzleSqlite } from "drizzle-orm/bun-sqlite";
+import { Database } from "bun:sqlite";
 import pg from "pg";
 import { mkdirSync, existsSync } from "fs";
 import path from "path";
@@ -19,7 +19,7 @@ function setupSqlite() {
   const dir = path.dirname(dbPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  const sqlite = new BetterSqlite3(dbPath);
+  const sqlite = new Database(dbPath, { create: true });
 
   // Create table if not already present (no separate migration step required)
   sqlite.exec(`

@@ -39,15 +39,22 @@ function waitForServer(port, attempts = 40, interval = 500) {
 // ── Start the bundled Express server (production only) ───────────────────────
 function startServer() {
   return new Promise((resolve, reject) => {
-    // dist/index.cjs is placed inside the app bundle at build time
-    const serverPath = path.join(app.getAppPath(), 'dist', 'index.cjs');
+    // dist/index.js is placed inside the app bundle at build time
+    const serverPath = path.join(app.getAppPath(), 'dist', 'index.js');
     const env = {
       ...process.env,
       NODE_ENV: 'production',
       PORT: String(PORT),
     };
 
-    serverProcess = spawn(process.execPath, [serverPath], {
+    // The packaged app bundles a per-platform Bun binary because the server
+    // uses bun:sqlite (a built-in module unavailable in Electron's Node).
+    const bunName = process.platform === 'win32' ? 'bun.exe' : 'bun';
+    const bunPath = isPacked
+      ? path.join(process.resourcesPath, bunName)
+      : 'bun';
+
+    serverProcess = spawn(bunPath, [serverPath], {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

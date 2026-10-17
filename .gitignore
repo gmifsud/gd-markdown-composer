@@ -1,6 +1,7 @@
 node_modules
 dist
 electron-dist
+bin/
 data/
 .DS_Store
 server/public
