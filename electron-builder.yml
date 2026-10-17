@@ -1,8 +1,7 @@
 appId: com.markdowneditor.app
-productName: Markdown Editor
+productName: GD Markdown Composer
 
-# Electron entry point
-main: electron/main.cjs
+# Electron entry point: "main" in package.json (electron/main.cjs)
 
 directories:
   output: electron-dist
@@ -11,21 +10,36 @@ directories:
 files:
   - dist/**/*
   - electron/main.cjs
+  - electron/preload.cjs
+  - electron/icons/icon-256.png
   - package.json
 
 asar: true
 
-# Bundle the per-platform Bun runtime that the server needs (bun:sqlite).
-# electron-builder matches the OS/arch of the build host, so we ship only
-# the binary for the target platform.
+# The server bundle runs under the bundled Bun binary, which cannot read
+# files from inside app.asar, so dist/ ships unpacked next to it.
+asarUnpack:
+  - dist/**/*
+
+# PlantUML jar (run with the user's Java), fetched by script/fetch-vendor.mjs.
 extraResources:
-  - from: "bin/bun-${os}-${arch}/"
-    to: "."
-    filter: ["bun", "bun.exe"]
+  - from: "vendor/plantuml/"
+    to: "plantuml"
+    filter: ["plantuml.jar"]
+
+# Bundle the per-platform Bun runtime that the server needs (bun:sqlite).
+# Paths match the folders written by script/fetch-bun.mjs. electron-builder's
+# ${os} macro expands to win/mac/linux, which does not match those names, so
+# each platform lists its own folder.
 
 # macOS
 mac:
   category: public.app-category.productivity
+  icon: electron/icons/icon.png
+  extraResources:
+    - from: "bin/bun-darwin-${arch}/"
+      to: "."
+      filter: ["bun"]
   target:
     - target: dmg
       arch:
@@ -34,6 +48,11 @@ mac:
 
 # Windows
 win:
+  icon: electron/icons/icon.png
+  extraResources:
+    - from: "bin/bun-windows-${arch}/"
+      to: "."
+      filter: ["bun.exe"]
   target:
     - target: nsis
       arch:
@@ -41,6 +60,11 @@ win:
 
 # Linux
 linux:
+  icon: electron/icons/icon.png
+  extraResources:
+    - from: "bin/bun-linux-${arch}/"
+      to: "."
+      filter: ["bun"]
   target:
     - target: AppImage
       arch:

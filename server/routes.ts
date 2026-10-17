@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { registerFsRoutes } from "./fs-routes";
+import { registerDiagramRoutes } from "./diagram-routes";
 import { api } from "@shared/routes";
 import { z } from "zod";
 
@@ -8,6 +10,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  registerFsRoutes(app);
+  registerDiagramRoutes(app);
+
   app.get(api.documents.list.path, async (req, res) => {
     const docs = await storage.getDocuments();
     res.json(docs);
@@ -75,9 +80,9 @@ export async function registerRoutes(
     const existingDocs = await storage.getDocuments();
     if (existingDocs.length === 0) {
       await storage.createDocument({
-        title: "Welcome to Markdown Editor",
+        title: "Welcome to GD Markdown Composer",
         fileType: "md",
-        content: "# Welcome to Your Markdown Editor!\n\nThis is a simple, clean **Markdown Editor**. You can use it to write rich text content using the Markdown syntax.\n\n## Features\n\n- **Real-time Preview**: See how your markdown looks as you type.\n- **Document Management**: Create, edit, and delete documents using the sidebar.\n- **Auto-saving**: Keep your progress safe without hitting a save button.\n\n### Formatting Examples\n\nYou can format text in *italics* or **bold**.\n\n> Blockquotes are great for quotes.\n\n1. First item\n2. Second item\n3. Third item\n\n```js\n// Code blocks look great too\nconsole.log('Hello World!');\n```",
+        content: "# Welcome to GD Markdown Composer!\n\nThis is a simple, clean **Markdown editor**. You can use it to write rich text content using the Markdown syntax.\n\n## Features\n\n- **Real-time Preview**: See how your markdown looks as you type.\n- **Document Management**: Create, edit, and delete documents using the sidebar.\n- **Auto-saving**: Keep your progress safe without hitting a save button.\n\n### Formatting Examples\n\nYou can format text in *italics* or **bold**.\n\n> Blockquotes are great for quotes.\n\n1. First item\n2. Second item\n3. Third item\n\n```js\n// Code blocks look great too\nconsole.log('Hello World!');\n```",
       });
       await storage.createDocument({
         title: "Project Ideas",
