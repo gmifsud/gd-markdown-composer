@@ -12,15 +12,19 @@ declare module "http" {
   }
 }
 
+// Documents are sent whole on every save, so the default 100kb limit is far too small.
+const BODY_LIMIT = "25mb";
+
 app.use(
   express.json({
+    limit: BODY_LIMIT,
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: BODY_LIMIT }));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -33,26 +37,15 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// Log method, path, status and timing only. Response bodies hold full
+// document content, so serialising them here is slow and leaks content to logs.
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
-    const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      log(`${req.method} ${path} ${res.statusCode} in ${Date.now() - start}ms`);
     }
   });
 
@@ -85,19 +78,39 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // Serve API and client on PORT (default 5000). HOST defaults to 0.0.0.0 for
+  // hosted/web use; the desktop app sets HOST=127.0.0.1 so documents aren't
+  // reachable from the network. With PORT_FALLBACK=1 a busy port falls back to
+  // a free one picked by the OS.
   const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
+  const host = process.env.HOST || "0.0.0.0";
+  const allowFallback = process.env.PORT_FALLBACK === "1";
+
+  const listen = (p: number) =>
+    httpServer.listen({
+      port: p,
+      host,
       // reusePort: true, // disabled on windows since it may cause ENOTSUP
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+    });
+
+  // One handler for both attempts: a callback passed to a failed listen()
+  // would stay registered and fire again on the retry.
+  httpServer.once("listening", () => {
+    const address = httpServer.address();
+    const actualPort = typeof address === "object" && address ? address.port : port;
+    log(`serving on ${host}:${actualPort}`);
+    // Machine-readable line the Electron shell waits for.
+    console.log(`MDC_SERVER_READY port=${actualPort}`);
+  });
+
+  httpServer.once("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && allowFallback && port !== 0) {
+      log(`port ${port} is in use, picking a free port`);
+      listen(0);
+      return;
+    }
+    throw err;
+  });
+
+  listen(port);
 })();

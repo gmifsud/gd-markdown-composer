@@ -8,6 +8,7 @@ import { Editor } from "@/components/editor/editor";
 import { useDocument, useCreateDocument } from "@/hooks/use-documents";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 function EditorLoader({ id }: { id: number }) {
   const { data: doc, isLoading } = useDocument(id);
@@ -33,7 +34,9 @@ function EditorLoader({ id }: { id: number }) {
     );
   }
   
-  return <Editor document={doc} />;
+  // Keyed so each document gets fresh editor state, and switching documents
+  // unmounts the previous editor, which flushes its unsaved edits.
+  return <Editor key={doc.id} document={doc} />;
 }
 
 function EmptyState() {
@@ -75,12 +78,15 @@ export default function Home() {
   const activeId = match && params?.id ? parseInt(params.id) : null;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const isMobile = useIsMobile();
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#eef0f2]">
 
-      {/* ── DESKTOP LAYOUT ── */}
-      <div className="hidden md:flex flex-1 min-w-0 h-full">
+      {/* Only one layout is mounted, so there is only ever one editor (and one auto-save). */}
+      {!isMobile ? (
+      /* ── DESKTOP LAYOUT ── */
+      <div className="flex flex-1 min-w-0 h-full">
 
         {/* Activity Bar */}
         <div className="flex flex-col items-center py-2 gap-1 w-12 shrink-0 bg-[#333333] border-r border-[#252526]">
@@ -116,14 +122,14 @@ export default function Home() {
         {/* Main: tabs + editor */}
         <div className="flex-1 flex flex-col min-w-0 h-full">
           <HorizontalTabs activeId={activeId} />
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {activeId ? <EditorLoader id={activeId} /> : <EmptyState />}
           </div>
         </div>
       </div>
-
-      {/* ── MOBILE LAYOUT ── */}
-      <div className="flex md:hidden flex-1 flex-col min-w-0 h-full">
+      ) : (
+      /* ── MOBILE LAYOUT ── */
+      <div className="flex flex-1 flex-col min-w-0 h-full">
         <div className="flex items-center h-14 border-b border-gray-200 px-4 bg-[#f8f9fa] shrink-0 gap-3">
           <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
             <SheetTrigger asChild>
@@ -139,10 +145,11 @@ export default function Home() {
             {activeId ? "Editor" : "Markdown App"}
           </span>
         </div>
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {activeId ? <EditorLoader id={activeId} /> : <EmptyState />}
         </div>
       </div>
+      )}
 
     </div>
   );

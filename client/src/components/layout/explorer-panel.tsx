@@ -133,11 +133,10 @@ export function ExplorerPanel({ activeId }: ExplorerPanelProps) {
 
   const handleDelete = (id: number, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm(`Delete "${title}"?`)) {
+    if (window.confirm(`Delete "${title}"? You can undo this from the notification that follows.`)) {
       deleteMutation.mutate(id, {
         onSuccess: () => {
           if (activeId === id) setLocation("/");
-          toast({ description: "Document deleted." });
         }
       });
     }

@@ -1,9 +1,25 @@
 import { useState, useEffect, useRef } from "react";
-import { FileText, Loader2, FileJson, Code2, X, Pin, PinOff, Trash2 } from "lucide-react";
+import { FileText, Loader2, FileJson, Code2, X, Pin, PinOff, Trash2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDocuments, useCreateDocument, useDeleteDocument } from "@/hooks/use-documents";
 import { useLocation } from "wouter";
-import { useToast } from "@/hooks/use-toast";
+
+function loadIdSet(key: string): Set<number> {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? new Set<number>(JSON.parse(stored)) : new Set<number>();
+  } catch {
+    return new Set<number>();
+  }
+}
+
+function saveIdSet(key: string, ids: Set<number>) {
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.from(ids)));
+  } catch {
+    // Storage can be unavailable (private mode, quota); tabs still work for this session.
+  }
+}
 
 interface HorizontalTabsProps {
   activeId: number | null;
@@ -21,16 +37,41 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
   const createMutation = useCreateDocument();
   const deleteMutation = useDeleteDocument();
   const [_, setLocation] = useLocation();
-  const { toast } = useToast();
 
-  const [pinnedIds, setPinnedIds] = useState<Set<number>>(() => {
-    try {
-      const stored = localStorage.getItem("pinnedTabIds");
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
+  const [pinnedIds, setPinnedIds] = useState<Set<number>>(() => loadIdSet("pinnedTabIds"));
+
+  // Closed tabs are hidden, not deleted. Opening the document again (from the
+  // explorer, a link or the URL) brings its tab back.
+  // Temporary until the workspace store with real open tabs (Phase 1, T1.1).
+  const [closedIds, setClosedIds] = useState<Set<number>>(() => loadIdSet("closedTabIds"));
+
+  const updateClosedIds = (update: (prev: Set<number>) => Set<number>) => {
+    setClosedIds(prev => {
+      const next = update(prev);
+      if (next !== prev) saveIdSet("closedTabIds", next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (activeId == null) return;
+    updateClosedIds(prev => {
+      if (!prev.has(activeId)) return prev;
+      const next = new Set(prev);
+      next.delete(activeId);
+      return next;
+    });
+  }, [activeId]);
+
+  // Forget closed ids of documents that no longer exist.
+  useEffect(() => {
+    if (!documents) return;
+    const existing = new Set(documents.map(d => d.id));
+    updateClosedIds(prev => {
+      const next = new Set(Array.from(prev).filter(id => existing.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [documents]);
 
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -50,7 +91,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
     setPinnedIds(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
-      localStorage.setItem("pinnedTabIds", JSON.stringify([...next]));
+      saveIdSet("pinnedTabIds", next);
       return next;
     });
     setContextMenu(null);
@@ -69,11 +110,10 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
 
   const handleDelete = (id: number, title: string) => {
     setContextMenu(null);
-    if (window.confirm(`Are you sure you want to delete "${title}"? This action cannot be undone.`)) {
+    if (window.confirm(`Delete "${title}"? You can undo this from the notification that follows.`)) {
       deleteMutation.mutate(id, {
         onSuccess: () => {
           if (activeId === id) setLocation("/");
-          toast({ description: "Document deleted successfully." });
         }
       });
     }
@@ -94,8 +134,22 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
     );
   }
 
+  const isOpen = (id: number) => id === activeId || !closedIds.has(id);
   const pinned = documents?.filter(d => pinnedIds.has(d.id)) ?? [];
-  const unpinned = documents?.filter(d => !pinnedIds.has(d.id)) ?? [];
+  const unpinned = documents?.filter(d => !pinnedIds.has(d.id) && isOpen(d.id)) ?? [];
+
+  // Closing never deletes. Closing the active tab moves to its right-hand
+  // neighbour (or the left one when it was last).
+  const handleClose = (id: number) => {
+    setContextMenu(null);
+    if (activeId === id) {
+      const visible = [...pinned, ...unpinned];
+      const index = visible.findIndex(d => d.id === id);
+      const neighbour = visible[index + 1] ?? visible[index - 1];
+      setLocation(neighbour ? `/d/${neighbour.id}` : "/");
+    }
+    updateClosedIds(prev => new Set(prev).add(id));
+  };
 
   return (
     <>
@@ -156,6 +210,7 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
               <button
                 key={doc.id}
                 onClick={() => setLocation(`/d/${doc.id}`)}
+                onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleClose(doc.id); } }}
                 onContextMenu={(e) => handleRightClick(e, doc.id, doc.title || "Untitled")}
                 className={`group flex items-center gap-1.5 px-2.5 h-8 rounded-md whitespace-nowrap text-sm transition-all border ${
                   isSelected
@@ -168,8 +223,9 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
                 <span className="truncate max-w-[140px]">{doc.title || "Untitled"}</span>
                 <span
                   role="button"
-                  className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 flex items-center justify-center rounded hover:text-destructive"
-                  onClick={(e) => { e.stopPropagation(); handleDelete(doc.id, doc.title || "Untitled"); }}
+                  title="Close (middle-click)"
+                  className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 flex items-center justify-center rounded hover:bg-gray-200"
+                  onClick={(e) => { e.stopPropagation(); handleClose(doc.id); }}
                   data-testid={`button-close-${doc.id}`}
                 >
                   <X className="w-3 h-3" />
@@ -180,6 +236,9 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
 
           {documents?.length === 0 && (
             <span className="text-sm text-gray-400 pl-1">No documents yet</span>
+          )}
+          {documents && documents.length > 0 && pinned.length + unpinned.length === 0 && (
+            <span className="text-sm text-gray-400 pl-1">No open tabs. Open a document from the explorer.</span>
           )}
         </div>
       </div>
@@ -202,12 +261,21 @@ export function HorizontalTabs({ activeId }: HorizontalTabsProps) {
               <><Pin className="w-3.5 h-3.5 text-gray-500" /> Pin tab</>
             )}
           </button>
+          {!pinnedIds.has(contextMenu.docId) && (
+            <button
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 text-gray-700 transition-colors"
+              onClick={() => handleClose(contextMenu.docId)}
+              data-testid="menu-close-tab"
+            >
+              <XCircle className="w-3.5 h-3.5 text-gray-500" /> Close tab
+            </button>
+          )}
           <div className="h-px bg-gray-100 my-1" />
           <button
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-red-50 text-red-600 transition-colors"
             onClick={() => handleDelete(contextMenu.docId, contextMenu.docTitle)}
           >
-            <Trash2 className="w-3.5 h-3.5" /> Delete
+            <Trash2 className="w-3.5 h-3.5" /> Delete document
           </button>
         </div>
       )}

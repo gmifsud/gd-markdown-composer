@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { format } from "date-fns";
 import { FileText, Plus, Trash2, Loader2, FileJson, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
 
 interface SidebarProps {
   activeId: number | null;
@@ -15,7 +14,6 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
   const createMutation = useCreateDocument();
   const deleteMutation = useDeleteDocument();
   const [_, setLocation] = useLocation();
-  const { toast } = useToast();
 
   const handleCreate = (fileType: "md" | "json" | "yaml" = "md") => {
     createMutation.mutate({ fileType }, {
@@ -27,13 +25,12 @@ export function Sidebar({ activeId, onNavigate }: SidebarProps) {
   };
 
   const handleDelete = (id: number, title: string) => {
-    if (window.confirm(`Are you sure you want to delete "${title}"? This action cannot be undone.`)) {
+    if (window.confirm(`Delete "${title}"? You can undo this from the notification that follows.`)) {
       deleteMutation.mutate(id, {
         onSuccess: () => {
           if (activeId === id) {
             setLocation("/");
           }
-          toast({ description: "Document deleted successfully." });
         }
       });
     }
