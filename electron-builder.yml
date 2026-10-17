@@ -10,6 +10,7 @@ directories:
 files:
   - dist/**/*
   - electron/main.cjs
+  - electron/preload.cjs
   - package.json
 
 asar: true

@@ -1,16 +1,29 @@
 import { useState, useMemo } from "react";
 import { parseAllDocuments } from "yaml";
-import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap } from "lucide-react";
+import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
-import { useAutosave } from "@/hooks/use-autosave";
+import { useAutosave, type Saver } from "@/hooks/use-autosave";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
-import { type DocumentResponse } from "@shared/routes";
+
+/** What the editor shows and how it saves: a database document or a file on disk. */
+export interface EditorSource {
+  title: string;
+  /** Database documents can be renamed from the header; files can't (yet). */
+  titleEditable: boolean;
+  /** "text" is any other text file: shown read-only without a preview. */
+  fileType: "md" | "json" | "yaml" | "text";
+  content: string;
+  /** Absolute path, for files on disk. */
+  path?: string;
+  /** Persists edits; omitted for read-only sources. */
+  save?: Saver;
+}
 
 interface EditorProps {
-  document: DocumentResponse;
+  source: EditorSource;
 }
 
 interface Analysis {
@@ -53,22 +66,27 @@ const DOWNLOAD_TYPES = {
   yaml: { ext: ".yaml", mime: "application/yaml" },
 } as const;
 
-/** Mount with `key={document.id}`: state is initialised from the document once. */
-export function Editor({ document }: EditorProps) {
-  const [content, setContent] = useState(document.content || "");
-  const [title, setTitle] = useState(document.title || "");
+const noopSave: Saver = async () => {};
+
+/** Mount with a `key` per document: state is initialised from the source once. */
+export function Editor({ source }: EditorProps) {
+  const [content, setContent] = useState(source.content);
+  const [title, setTitle] = useState(source.title);
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
-  const isJson = document.fileType === "json";
-  const isYaml = document.fileType === "yaml";
+  const readOnly = !source.save;
+  const isPlainText = source.fileType === "text";
+  const isJson = source.fileType === "json";
+  const isYaml = source.fileType === "yaml";
   const isStructured = isJson || isYaml;
   const formatLabel = isJson ? "JSON" : "YAML";
 
   const { status, flush } = useAutosave(
-    document.id,
     { content, title },
-    { content: document.content || "", title: document.title || "" },
+    { content: source.content, title: source.title },
+    source.save ?? noopSave,
+    { enabled: !readOnly },
   );
 
   const analysis = useMemo(
@@ -88,8 +106,10 @@ export function Editor({ document }: EditorProps) {
 
   const handleSaveAs = () => {
     try {
-      const filename = title.trim() || "document";
-      const { ext, mime } = DOWNLOAD_TYPES[document.fileType as keyof typeof DOWNLOAD_TYPES] ?? DOWNLOAD_TYPES.md;
+      const known = DOWNLOAD_TYPES[source.fileType as keyof typeof DOWNLOAD_TYPES];
+      // Files keep their own name and extension; database documents get one from their type.
+      const { ext, mime } = source.path || !known ? { ext: "", mime: known?.mime ?? "text/plain" } : known;
+      const filename = (title.trim() || "document").replace(/[\\/:*?"<>|]/g, "_");
       // A Blob URL works for any size; data: URIs fail for large files.
       const url = URL.createObjectURL(new Blob([content], { type: `${mime};charset=utf-8` }));
       const element = window.document.createElement("a");
@@ -132,12 +152,25 @@ export function Editor({ document }: EditorProps) {
     <div className="flex-1 flex flex-col min-w-0 bg-white shadow-sm ring-1 ring-black/[0.03] z-10 m-0 md:m-4 md:rounded-2xl overflow-hidden">
       {/* Editor Header */}
       <div className="h-16 border-b border-gray-100 flex items-center px-4 md:px-8 justify-between bg-white shrink-0">
-        <input
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          className="font-bold text-lg md:text-xl focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-900 w-1/2 tracking-tight"
-          placeholder="Untitled Document"
-        />
+        {source.titleEditable ? (
+          <input
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            className="font-bold text-lg md:text-xl focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-900 w-1/2 tracking-tight"
+            placeholder="Untitled Document"
+          />
+        ) : (
+          <div className="min-w-0 w-1/2 flex flex-col">
+            <span className="font-bold text-lg md:text-xl text-gray-900 tracking-tight truncate" title={source.path}>
+              {title}
+            </span>
+            {source.path && (
+              <span className="text-[11px] text-gray-400 truncate" title={source.path} data-testid="editor-path">
+                {source.path}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-3 md:gap-5">
           {isStructured && analysis.error && (
             <span className="text-[11px] md:text-xs font-medium text-red-500 items-center gap-1.5 hidden sm:flex" title={analysis.error}>
@@ -151,16 +184,24 @@ export function Editor({ document }: EditorProps) {
               <span className="hidden md:inline">Valid {formatLabel}</span>
             </span>
           )}
+          {readOnly ? (
+            <span className="text-[11px] md:text-xs font-medium text-gray-500 flex items-center gap-1.5 bg-gray-100 rounded-full px-2.5 py-1" data-testid="read-only-badge">
+              <Lock className="w-3 h-3" /> Read-only
+            </span>
+          ) : (
           <span className="text-[11px] md:text-xs font-medium text-gray-400 flex items-center gap-1.5 md:gap-2" data-testid="save-status">
             {status === "saving" ? (
               <><Loader2 className="w-3.5 h-3.5 animate-spin" /> <span className="hidden md:inline">Saving...</span></>
+            ) : status === "conflict" ? (
+              <><AlertCircle className="w-3.5 h-3.5 text-red-500" /> <span className="hidden md:inline text-red-500">Changed on disk</span></>
             ) : status === "dirty" ? (
               <><div className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]" /> <span className="hidden md:inline">Unsaved</span></>
             ) : (
               <><Check className="w-3.5 h-3.5 text-green-500" /> <span className="hidden md:inline">Saved</span></>
             )}
           </span>
-          {isStructured && (
+          )}
+          {isStructured && !readOnly && (
             <Button
               size="sm"
               variant="secondary"
@@ -182,24 +223,35 @@ export function Editor({ document }: EditorProps) {
             <Download className="w-3.5 h-3.5 mr-1.5" />
             Save As
           </Button>
-          <Button
-            size="sm"
-            variant={status === "dirty" ? "default" : "secondary"}
-            onClick={() => void flush()}
-            disabled={status !== "dirty"}
-            className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
-            title="Save (Ctrl+S)"
-            data-testid="button-save"
-          >
-            <Save className="w-3.5 h-3.5 mr-1.5" />
-            Save
-          </Button>
+          {!readOnly && (
+            <Button
+              size="sm"
+              variant={status === "dirty" || status === "conflict" ? "default" : "secondary"}
+              onClick={() => void flush()}
+              disabled={status !== "dirty" && status !== "conflict"}
+              className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
+              title="Save (Ctrl+S)"
+              data-testid="button-save"
+            >
+              <Save className="w-3.5 h-3.5 mr-1.5" />
+              Save
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Editor Body - Split Desktop / Tabbed Mobile */}
+      {/* Editor Body - plain text viewer / Split Desktop / Tabbed Mobile */}
       <div className="flex-1 flex flex-col min-h-0 bg-white">
-        {!isMobile ? (
+        {isPlainText ? (
+          <textarea
+            className="flex-1 resize-none p-5 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent text-gray-700 whitespace-pre"
+            value={content}
+            readOnly
+            spellCheck={false}
+            wrap="off"
+            data-testid="editor-textarea"
+          />
+        ) : !isMobile ? (
           <div className="flex flex-1 min-h-0">
             <div className="flex-1 flex flex-col min-h-0 border-r border-gray-100/80 group">
               <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
@@ -211,6 +263,7 @@ export function Editor({ document }: EditorProps) {
                 }`}
                 value={content}
                 onChange={e => setContent(e.target.value)}
+                readOnly={readOnly}
                 placeholder={placeholder}
                 spellCheck={false}
                 data-testid="editor-textarea"

@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import { installPendingSaveHooks } from "@/lib/pending-saves";
+import { WorkspaceProvider } from "@/lib/workspace";
+import { FolderDialogsProvider } from "@/components/layout/folder-dialogs";
 
 installPendingSaveHooks();
 
@@ -14,6 +16,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/d/:id" component={Home} />
+      <Route path="/f" component={Home} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -24,7 +27,11 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <Router />
+        <WorkspaceProvider>
+          <FolderDialogsProvider>
+            <Router />
+          </FolderDialogsProvider>
+        </WorkspaceProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

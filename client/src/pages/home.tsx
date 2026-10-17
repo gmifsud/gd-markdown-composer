@@ -1,51 +1,36 @@
 import { useState } from "react";
-import { useRoute, useLocation } from "wouter";
-import { Menu, FileText, Plus, Loader2, Files, ChevronLeft, ChevronRight } from "lucide-react";
+import { Menu, FileText, Plus, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
-import { HorizontalTabs } from "@/components/layout/horizontal-tabs";
-import { ExplorerPanel } from "@/components/layout/explorer-panel";
-import { Editor } from "@/components/editor/editor";
-import { useDocument, useCreateDocument } from "@/hooks/use-documents";
+import { TabBar } from "@/components/layout/tab-bar";
+import { AppToolbar } from "@/components/layout/app-toolbar";
+import { ActivityBar, WorkbenchSidebar } from "@/components/layout/workbench-sidebar";
+import { DocumentEditor, FileEditor } from "@/components/editor/editor-loaders";
+import { useCreateDocument } from "@/hooks/use-documents";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { dbUri, parseUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 
-function EditorLoader({ id }: { id: number }) {
-  const { data: doc, isLoading } = useDocument(id);
-  
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center space-y-4">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-300" />
-        <p className="text-sm text-gray-400 font-medium">Loading document...</p>
-      </div>
-    );
-  }
-  
-  if (!doc) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-gray-50/50">
-        <div className="w-16 h-16 bg-white shadow-sm rounded-2xl flex items-center justify-center border border-gray-100 mb-4 text-gray-400">
-          <FileText className="w-8 h-8" />
-        </div>
-        <h2 className="text-lg font-semibold mb-1 text-gray-900 tracking-tight">Document Not Found</h2>
-        <p className="text-gray-500 text-sm">The document you're looking for doesn't exist or was deleted.</p>
-      </div>
-    );
-  }
-  
-  // Keyed so each document gets fresh editor state, and switching documents
-  // unmounts the previous editor, which flushes its unsaved edits.
-  return <Editor key={doc.id} document={doc} />;
+/**
+ * The editor for the active tab. Keyed by tab so each document gets fresh
+ * editor state, and switching tabs unmounts the previous editor, which
+ * flushes its unsaved edits.
+ */
+function ActiveEditor({ uri }: { uri: string }) {
+  const ref = parseUri(uri);
+  if (!ref) return <EmptyState />;
+  return ref.kind === "db"
+    ? <DocumentEditor key={uri} id={ref.id} />
+    : <FileEditor key={uri} uri={uri} path={ref.path} />;
 }
 
 function EmptyState() {
   const createMutation = useCreateDocument();
-  const [_, setLocation] = useLocation();
+  const { open } = useWorkspaceActions();
 
   const handleCreate = () => {
     createMutation.mutate({}, {
-      onSuccess: (newDoc) => setLocation(`/d/${newDoc.id}`)
+      onSuccess: (newDoc) => open(dbUri(newDoc.id))
     });
   };
 
@@ -55,8 +40,8 @@ function EmptyState() {
         <FileText className="w-8 h-8" strokeWidth={1.5} />
       </div>
       <h2 className="text-2xl font-bold mb-2 text-gray-900 tracking-tight">No Document Selected</h2>
-      <p className="text-gray-500 text-[15px] mb-8 max-w-[300px] text-center leading-relaxed">
-        Choose a document from the explorer or create a new one.
+      <p className="text-gray-500 text-[15px] mb-8 max-w-[320px] text-center leading-relaxed">
+        Open a file from the explorer, pick a document, or create a new one.
       </p>
       <Button
         onClick={handleCreate}
@@ -74,83 +59,51 @@ function EmptyState() {
 }
 
 export default function Home() {
-  const [match, params] = useRoute("/d/:id");
-  const activeId = match && params?.id ? parseInt(params.id) : null;
+  const { activeUri } = useWorkspace();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [explorerOpen, setExplorerOpen] = useState(true);
   const isMobile = useIsMobile();
+  const activeRef = activeUri ? parseUri(activeUri) : null;
+
+  const content = activeUri ? <ActiveEditor key={activeUri} uri={activeUri} /> : <EmptyState />;
+
+  // Only one layout is mounted, so there is only ever one editor (and one auto-save).
+  if (!isMobile) {
+    return (
+      <div className="flex flex-col h-screen w-full overflow-hidden bg-[#eef0f2]">
+        <AppToolbar />
+        <div className="flex flex-1 min-h-0">
+          <ActivityBar />
+          <WorkbenchSidebar />
+          <main className="flex-1 flex flex-col min-w-0 h-full">
+            <TabBar />
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">{content}</div>
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#eef0f2]">
-
-      {/* Only one layout is mounted, so there is only ever one editor (and one auto-save). */}
-      {!isMobile ? (
-      /* ── DESKTOP LAYOUT ── */
-      <div className="flex flex-1 min-w-0 h-full">
-
-        {/* Activity Bar */}
-        <div className="flex flex-col items-center py-2 gap-1 w-12 shrink-0 bg-[#333333] border-r border-[#252526]">
-          <button
-            className={`flex items-center justify-center w-9 h-9 rounded transition-colors ${
-              explorerOpen
-                ? "text-white bg-[#4c4c4c]"
-                : "text-[#858585] hover:text-white"
-            }`}
-            onClick={() => setExplorerOpen(v => !v)}
-            title="Explorer"
-            data-testid="button-toggle-explorer"
-          >
-            <Files className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Explorer Panel */}
-        {explorerOpen && (
-          <div className="w-56 shrink-0 h-full border-r border-[#252526] relative">
-            <ExplorerPanel activeId={activeId} />
-            {/* Collapse handle */}
-            <button
-              className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-[#3c3c3c] border border-[#555] rounded-full flex items-center justify-center text-[#aaa] hover:text-white hover:bg-[#505050] transition-colors shadow"
-              onClick={() => setExplorerOpen(false)}
-              title="Close explorer"
-            >
-              <ChevronLeft className="w-3 h-3" />
-            </button>
-          </div>
-        )}
-
-        {/* Main: tabs + editor */}
-        <div className="flex-1 flex flex-col min-w-0 h-full">
-          <HorizontalTabs activeId={activeId} />
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            {activeId ? <EditorLoader id={activeId} /> : <EmptyState />}
-          </div>
-        </div>
+    <div className="flex flex-col h-screen w-full overflow-hidden bg-[#eef0f2]">
+      <div className="flex items-center h-14 border-b border-gray-200 px-4 bg-[#f8f9fa] shrink-0 gap-3">
+        <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+          <SheetTrigger asChild>
+            <Button variant="ghost" size="icon" className="-ml-2 text-gray-600">
+              <Menu className="w-5 h-5" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="left" className="p-0 w-72 border-r-0">
+            <Sidebar
+              activeId={activeRef?.kind === "db" ? activeRef.id : null}
+              onNavigate={() => setIsMobileMenuOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+        <span className="font-semibold text-sm tracking-tight text-gray-800">
+          {activeUri ? "Editor" : "Markdown App"}
+        </span>
       </div>
-      ) : (
-      /* ── MOBILE LAYOUT ── */
-      <div className="flex flex-1 flex-col min-w-0 h-full">
-        <div className="flex items-center h-14 border-b border-gray-200 px-4 bg-[#f8f9fa] shrink-0 gap-3">
-          <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="-ml-2 text-gray-600">
-                <Menu className="w-5 h-5" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="p-0 w-72 border-r-0">
-              <Sidebar activeId={activeId} onNavigate={() => setIsMobileMenuOpen(false)} />
-            </SheetContent>
-          </Sheet>
-          <span className="font-semibold text-sm tracking-tight text-gray-800">
-            {activeId ? "Editor" : "Markdown App"}
-          </span>
-        </div>
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          {activeId ? <EditorLoader id={activeId} /> : <EmptyState />}
-        </div>
-      </div>
-      )}
-
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">{content}</div>
     </div>
   );
 }

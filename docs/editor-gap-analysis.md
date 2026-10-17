@@ -330,6 +330,17 @@ Size: **S** ≈ ≤ ½ day, **M** ≈ 1–2 days, **L** ≈ 3–5 days. Tasks in
 
 ---
 
+### Progress after Phase 0 (2026-10-17, not yet committed)
+
+Done as part of a workspace round:
+- **T1.1 / T1.3 (partial):** a workspace store (`client/src/lib/workspace.tsx`) with real open tabs, pins and saved layout. Tab menu has Close, Close Others, Close to the Right, Close Tabs in Folder and Close All.
+- **T1.2 (partial):** one slim row of tabs that scrolls sideways, with a folder colour hint on each tab. Drag-to-reorder isn't done yet.
+- **T3.5 (partial):** the sidebar is resizable (drag, arrow keys, double-click to reset). The explorer and a separate Documents-by-type panel are switched from the activity bar.
+- **T6.1–T6.3 (partial):** local folders through `/api/fs/*` (desktop app and local dev only, loopback + header guarded). Several folders can be open at once; `.md`/`.json`/`.yaml` are edited in place on disk with conflict detection; any other text file opens read-only. Includes the native multi-folder picker in Electron, Copy Path / Copy Relative Path / Reveal, and New File in a folder.
+- **Toolbar:** New ▾ (Markdown / JSON / YAML document, or a new file in a folder), Open Folder, Save.
+
+Still open from those tasks: Ctrl+W / Ctrl+Tab shortcuts, tab drag-to-reorder, watching for external changes (T6.4), keyboard arrow navigation in the tree (T3.6), and relative images for files (T5.7).
+
 ## 6. Suggested order and milestones
 
 ```

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, shell, Menu } = require('electron');
+const { app, BrowserWindow, shell, Menu, dialog, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -82,6 +82,8 @@ function startServer() {
       HOST: '127.0.0.1',
       PORT: String(PACKED_PREFERRED_PORT),
       PORT_FALLBACK: '1',
+      // Opening folders from disk is a desktop feature.
+      FS_ACCESS: '1',
       SQLITE_PATH: resolveSqlitePath(),
     };
 
@@ -214,6 +216,7 @@ async function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
     title: 'Markdown Editor',
     show: false,
@@ -266,6 +269,22 @@ async function createWindow() {
     mainWindow = null;
   });
 }
+
+// ── IPC for electron/preload.cjs ─────────────────────────────────────────────
+ipcMain.handle('mdc:pick-folders', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Open Folder',
+    properties: ['openDirectory', 'multiSelections'],
+  });
+  return result.canceled ? [] : result.filePaths;
+});
+
+ipcMain.handle('mdc:reveal-path', (_event, targetPath) => {
+  if (typeof targetPath === 'string' && path.isAbsolute(targetPath)) {
+    shell.showItemInFolder(targetPath);
+  }
+});
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(createWindow);
