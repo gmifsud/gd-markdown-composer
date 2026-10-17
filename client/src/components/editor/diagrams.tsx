@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useDebounce } from "@/hooks/use-debounce";
+import { Expandable } from "@/components/editor/lightbox";
 import { FS_CLIENT_HEADER } from "@shared/fs";
 import type { PlantUmlRenderResponse } from "@shared/diagrams";
 
@@ -95,8 +96,19 @@ function MermaidDiagram({ code }: { code: string }) {
 
   return (
     <>
-      {svg ? <div className="flex justify-center [&_svg]:max-w-full [&_svg]:h-auto" dangerouslySetInnerHTML={{ __html: svg }} />
-        : !error && <Pending label="Rendering Mermaid diagram…" />}
+      {svg ? (
+        <Expandable
+          title="Mermaid diagram"
+          renderFull={() => (
+            <div
+              className="w-full h-full flex items-center justify-center [&_svg]:!max-w-none [&_svg]:!w-full [&_svg]:!h-full"
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          )}
+        >
+          <div className="flex justify-center [&_svg]:max-w-full [&_svg]:h-auto" dangerouslySetInnerHTML={{ __html: svg }} />
+        </Expandable>
+      ) : !error && <Pending label="Rendering Mermaid diagram…" />}
       {error && <DiagramError title="Mermaid error">{error}</DiagramError>}
     </>
   );
@@ -134,14 +146,18 @@ function PlantUmlDiagram({ code }: { code: string }) {
 
   return (
     <>
-      {result.svg && (
+      {result.svg && (() => {
         // As an <img>, the SVG can't run scripts or reach the page.
-        <img
-          className="mx-auto max-w-full h-auto"
-          src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}`}
-          alt="PlantUML diagram"
-        />
-      )}
+        const src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}`;
+        return (
+          <Expandable
+            title="PlantUML diagram"
+            renderFull={() => <img className="w-full h-full object-contain" src={src} alt="PlantUML diagram" draggable={false} />}
+          >
+            <img className="mx-auto max-w-full h-auto" src={src} alt="PlantUML diagram" />
+          </Expandable>
+        );
+      })()}
       {result.error && <DiagramError title="PlantUML error">{result.error}</DiagramError>}
     </>
   );
@@ -149,8 +165,15 @@ function PlantUmlDiagram({ code }: { code: string }) {
 
 // ── Draw.io (bundled diagrams.net viewer, loaded on first use) ──────────────
 
+interface DrawioGraph {
+  container: HTMLElement;
+  maxFitScale: number;
+  fit(border?: number): void;
+  center(horizontal?: boolean, vertical?: boolean): void;
+}
+
 interface GraphViewerStatic {
-  createViewerForElement(element: HTMLElement, callback?: () => void): void;
+  createViewerForElement(element: HTMLElement, callback?: (viewer: { graph: DrawioGraph }) => void): void;
 }
 
 declare global {
@@ -160,6 +183,8 @@ declare global {
 }
 
 const DRAWIO_VIEWER_URL = "/vendor/drawio/viewer-static.min.js";
+// Room left for the viewer's own zoom/layers toolbar under the diagram.
+const DRAWIO_TOOLBAR_HEIGHT = 40;
 let drawioLoader: Promise<GraphViewerStatic> | null = null;
 
 function loadDrawioViewer() {
@@ -181,38 +206,8 @@ function loadDrawioViewer() {
 }
 
 function DrawioDiagram({ code }: { code: string }) {
-  const host = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
   const xml = code.trim();
   const looksLikeDrawio = /<mxfile[\s>]|<mxGraphModel[\s>]/.test(xml);
-
-  useEffect(() => {
-    if (!looksLikeDrawio) return;
-    let cancelled = false;
-    loadDrawioViewer()
-      .then(viewer => {
-        if (cancelled || !host.current) return;
-        host.current.replaceChildren();
-        const el = document.createElement("div");
-        el.className = "mxgraph";
-        el.setAttribute("data-mxgraph", JSON.stringify({
-          xml,
-          toolbar: "zoom layers pages",
-          nav: true,
-          resize: true,
-          "auto-fit": true,
-          lightbox: false,
-          highlight: "#007fd4",
-        }));
-        host.current.appendChild(el);
-        viewer.createViewerForElement(el);
-        setError(null);
-        setReady(true);
-      })
-      .catch(err => { if (!cancelled) setError(err.message); });
-    return () => { cancelled = true; };
-  }, [xml, looksLikeDrawio]);
 
   if (!looksLikeDrawio) {
     return (
@@ -223,10 +218,68 @@ function DrawioDiagram({ code }: { code: string }) {
   }
 
   return (
-    <>
+    // The viewer has its own zoom controls, so the lightbox doesn't pan or zoom it.
+    <Expandable title="Draw.io diagram" pannable={false} renderFull={() => <DrawioCanvas xml={xml} large />}>
+      <DrawioCanvas xml={xml} />
+    </Expandable>
+  );
+}
+
+/** Mounts the diagrams.net viewer for `xml`; `large` fits it to a full-screen box. */
+function DrawioCanvas({ xml, large = false }: { xml: string; large?: boolean }) {
+  const host = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let observer: ResizeObserver | null = null;
+    loadDrawioViewer()
+      .then(viewer => {
+        if (cancelled || !host.current) return;
+        host.current.replaceChildren();
+        const el = document.createElement("div");
+        el.className = "mxgraph";
+        el.setAttribute("data-mxgraph", JSON.stringify({
+          xml,
+          toolbar: "zoom layers pages",
+          nav: true,
+          resize: !large,
+          "auto-fit": true,
+          lightbox: false,
+          highlight: "#007fd4",
+        }));
+        if (large) el.style.width = "100%";
+        host.current.appendChild(el);
+        viewer.createViewerForElement(el, ({ graph }) => {
+          if (!large || cancelled || !host.current) return;
+          // Full screen: fill the box (the viewer's auto-fit only ever shrinks).
+          const hostEl = host.current;
+          const refit = () => {
+            graph.container.style.height = `${Math.max(200, hostEl.clientHeight - DRAWIO_TOOLBAR_HEIGHT)}px`;
+            graph.maxFitScale = 8;
+            graph.fit(24);
+            graph.center(true, true);
+          };
+          refit();
+          observer = new ResizeObserver(refit);
+          observer.observe(hostEl);
+        });
+        setError(null);
+        setReady(true);
+      })
+      .catch(err => { if (!cancelled) setError(err.message); });
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
+  }, [xml, large]);
+
+  return (
+    <div className={large ? "w-full h-full flex flex-col" : "w-full"}>
       {!ready && !error && <Pending label="Loading draw.io viewer…" />}
-      <div ref={host} className="w-full" data-testid="drawio-host" />
+      <div ref={host} className={large ? "w-full flex-1 min-h-0" : "w-full"} data-testid="drawio-host" />
       {error && <DiagramError title="Draw.io error">{error}</DiagramError>}
-    </>
+    </div>
   );
 }

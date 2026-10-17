@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import { useLocation } from "wouter";
 import { DiagramBlock, DIAGRAM_LANGUAGES } from "@/components/editor/diagrams";
+import { Expandable } from "@/components/editor/lightbox";
 
 // Heading ids get a prefix (as on GitHub) so a heading like "# Root" can't
 // collide with ids used by the app itself. `#section` links are mapped to it.
@@ -87,7 +88,21 @@ function PreviewPre({ node, children, ...rest }: ComponentPropsWithoutRef<"pre">
   return <pre {...rest}>{children}</pre>;
 }
 
-const components: Components = { a: PreviewLink, pre: PreviewPre };
+/** Images get an Expand button that opens them full screen. */
+function PreviewImage({ node: _node, src, alt, ...rest }: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
+  if (!src) return <img alt={alt} {...rest} />;
+  return (
+    <Expandable
+      inline
+      title={alt || "Image"}
+      renderFull={() => <img className="w-full h-full object-contain" src={src} alt={alt} draggable={false} />}
+    >
+      <img src={src} alt={alt} {...rest} />
+    </Expandable>
+  );
+}
+
+const components: Components = { a: PreviewLink, pre: PreviewPre, img: PreviewImage };
 
 interface MarkdownPreviewProps {
   content: string;

@@ -18,6 +18,10 @@ const DEV_PORT = Number(process.env.PORT || 5000);
 const PACKED_PREFERRED_PORT = Number(process.env.PORT || 47615);
 
 const SERVER_READY_RE = /MDC_SERVER_READY port=(\d+)/;
+// Chromium zoom levels: each step is a factor of 1.2 (0 = 100%).
+const ZOOM_STEP = 0.5;
+const ZOOM_MIN = -4;
+const ZOOM_MAX = 6;
 const SERVER_START_TIMEOUT_MS = 20000;
 const CLOSE_FLUSH_TIMEOUT_MS = 3000;
 
@@ -143,6 +147,68 @@ function startServer() {
   });
 }
 
+// ── Zoom ─────────────────────────────────────────────────────────────────────
+// The built-in zoomIn role listens for Ctrl+Plus, which needs Shift on most
+// keyboards, so Ctrl+= did nothing. Zoom keys are handled here instead, and
+// the level is remembered between launches.
+
+function zoomStatePath() {
+  return path.join(app.getPath('userData'), 'zoom.json');
+}
+
+function loadZoomLevel() {
+  try {
+    const { level } = JSON.parse(fs.readFileSync(zoomStatePath(), 'utf8'));
+    return typeof level === 'number' ? Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveZoomLevel(level) {
+  try {
+    fs.writeFileSync(zoomStatePath(), JSON.stringify({ level }));
+  } catch (err) {
+    console.warn('[electron] Could not save zoom level:', err.message);
+  }
+}
+
+function setZoom(contents, level) {
+  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
+  contents.setZoomLevel(next);
+  saveZoomLevel(next);
+}
+
+const zoomIn = (contents) => setZoom(contents, contents.getZoomLevel() + ZOOM_STEP);
+const zoomOut = (contents) => setZoom(contents, contents.getZoomLevel() - ZOOM_STEP);
+const resetZoom = (contents) => setZoom(contents, 0);
+
+function installZoomHandling(contents) {
+  // Ctrl/Cmd with =, +, -, 0 on the main keys or the numpad.
+  contents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return;
+    const { key, code } = input;
+    if (key === '=' || key === '+' || code === 'NumpadAdd') {
+      event.preventDefault();
+      zoomIn(contents);
+    } else if (key === '-' || key === '_' || code === 'NumpadSubtract') {
+      event.preventDefault();
+      zoomOut(contents);
+    } else if ((key === '0' && !input.shift) || code === 'Numpad0') {
+      event.preventDefault();
+      resetZoom(contents);
+    }
+  });
+
+  // Ctrl + mouse wheel / trackpad pinch.
+  contents.on('zoom-changed', (_event, direction) => {
+    if (direction === 'in') zoomIn(contents);
+    else zoomOut(contents);
+  });
+
+  contents.on('did-finish-load', () => contents.setZoomLevel(loadZoomLevel()));
+}
+
 // ── Application menu (minimal) ───────────────────────────────────────────────
 function buildMenu() {
   const isMac = process.platform === 'darwin';
@@ -156,9 +222,26 @@ function buildMenu() {
         { role: 'reload' },
         { role: 'forceReload' },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        // Accelerators are shown in the menu; the keys themselves are handled
+        // in installZoomHandling so Ctrl+= and the numpad work too.
+        {
+          label: 'Actual Size',
+          accelerator: 'CommandOrControl+0',
+          registerAccelerator: false,
+          click: (_item, win) => win && resetZoom(win.webContents),
+        },
+        {
+          label: 'Zoom In',
+          accelerator: 'CommandOrControl+=',
+          registerAccelerator: false,
+          click: (_item, win) => win && zoomIn(win.webContents),
+        },
+        {
+          label: 'Zoom Out',
+          accelerator: 'CommandOrControl+-',
+          registerAccelerator: false,
+          click: (_item, win) => win && zoomOut(win.webContents),
+        },
         { type: 'separator' },
         { role: 'togglefullscreen' },
         ...(!isPacked ? [{ type: 'separator' }, { role: 'toggleDevTools' }] : []),
@@ -228,6 +311,8 @@ async function createWindow() {
   });
 
   buildMenu();
+
+  installZoomHandling(mainWindow.webContents);
 
   mainWindow.loadURL(appOrigin);
 
