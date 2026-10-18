@@ -9,3 +9,6 @@ vite.config.ts.*
 *.tar.gz
 vendor/
 client/public/vendor/
+
+# Replit agent state, logs and skills (logs can contain secrets)
+.local/
