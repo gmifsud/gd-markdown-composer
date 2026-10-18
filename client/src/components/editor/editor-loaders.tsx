@@ -2,6 +2,7 @@ import { useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, FileWarning, Loader2 } from "lucide-react";
 import { Editor, type EditorSource } from "@/components/editor/editor";
+import { ImageFileView } from "@/components/editor/image-view";
 import { Button } from "@/components/ui/button";
 import { useDocument, saveDocument, cacheSavedDocument } from "@/hooks/use-documents";
 import type { Saver } from "@/hooks/use-autosave";
@@ -69,6 +70,10 @@ export function DocumentEditor({ id }: { id: number }) {
 // ── Files on disk ────────────────────────────────────────────────────────────
 
 export function FileEditor({ path, uri }: { path: string; uri: string }) {
+  return fileKindOf(path) === "image" ? <ImageFileView path={path} /> : <TextFileEditor path={path} uri={uri} />;
+}
+
+function TextFileEditor({ path, uri }: { path: string; uri: string }) {
   const queryClient = useQueryClient();
   const { close } = useWorkspaceActions();
   // Always read fresh from disk when a file tab is shown again.
@@ -84,7 +89,7 @@ export function FileEditor({ path, uri }: { path: string; uri: string }) {
   const source = useMemo<EditorSource | null>(() => {
     if (!data || data.content === null) return null;
     mtime.current = data.mtimeMs;
-    const kind = fileKindOf(path);
+    const kind = fileKindOf(path) as EditorSource["fileType"];
     const save: Saver = async (snapshot, { keepalive, force }) => {
       const res = await fsApi.write(
         { path, content: snapshot.content, expectedMtimeMs: force ? undefined : mtime.current ?? undefined },

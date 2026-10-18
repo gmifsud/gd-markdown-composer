@@ -1,9 +1,10 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { promises as fsp } from "fs";
+import { randomBytes } from "crypto";
 import os from "os";
 import path from "path";
 import {
-  FS_CLIENT_HEADER,
+  FS_CLIENT_HEADER, IMAGE_TYPES, extensionOf,
   type FsCreateRequest, type FsEntry, type FsListResponse, type FsReadResponse,
   type FsSearchRequest, type FsSearchResponse, type FsSearchResult,
   type FsStatus, type FsWriteRequest, type FsWriteResponse,
@@ -13,6 +14,12 @@ const MAX_READ_BYTES = 20 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 const HIDDEN_ENTRIES = new Set([".git", ".DS_Store", "Thumbs.db"]);
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+// Image URLs (used by <img>, which can't send headers) carry this token instead.
+const IMAGE_TOKEN = randomBytes(24).toString("hex");
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+const NAME_INDEX_TTL_MS = 60_000;
+const NAME_INDEX_MAX_ENTRIES = 200_000;
 
 // Search limits: big vaults (thousands of files in dot-folders) must not stall the app.
 const SEARCH_SKIP_DIRS = new Set(["node_modules"]);
@@ -41,12 +48,16 @@ class HttpError extends Error {
   }
 }
 
+function isLocalRequest(req: Request) {
+  const remote = req.socket.remoteAddress ?? "";
+  const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  return LOOPBACK_ADDRESSES.has(remote) && LOOPBACK_HOSTNAMES.has(hostname);
+}
+
 // Requests must come from this machine, name a loopback host (blocks DNS
 // rebinding) and carry the client header (blocks cross-site simple requests).
 export function localOnlyGuard(req: Request, res: Response, next: NextFunction) {
-  const remote = req.socket.remoteAddress ?? "";
-  const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
-  if (!LOOPBACK_ADDRESSES.has(remote) || !LOOPBACK_HOSTNAMES.has(hostname)) {
+  if (!isLocalRequest(req)) {
     return res.status(403).json({ message: "Folder access is only available on this computer" });
   }
   if (req.get(FS_CLIENT_HEADER) !== "1") {
@@ -206,6 +217,66 @@ async function searchFolders(request: FsSearchRequest, isAborted: () => boolean)
   return { results: results.slice(0, SEARCH_MAX_RESULTS), truncated, scannedFiles, elapsedMs: Date.now() - started };
 }
 
+// ── Image lookup ────────────────────────────────────────────────────────────
+
+const exists = (p: string) => fsp.stat(p).then(s => s.isFile(), () => false);
+
+/** Lower-case file name → paths, per workspace folder, for Obsidian-style ![[name.png]] lookups. */
+const nameIndexes = new Map<string, { built: number; index: Promise<Map<string, string[]>> }>();
+
+function nameIndex(root: string) {
+  const cached = nameIndexes.get(root);
+  if (cached && Date.now() - cached.built < NAME_INDEX_TTL_MS) return cached.index;
+  const index = (async () => {
+    const byName = new Map<string, string[]>();
+    const stack = [root];
+    let entries = 0;
+    while (stack.length && entries < NAME_INDEX_MAX_ENTRIES) {
+      const dir = stack.pop()!;
+      const dirents = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const d of dirents) {
+        if (HIDDEN_ENTRIES.has(d.name) || SEARCH_SKIP_DIRS.has(d.name)) continue;
+        entries++;
+        const full = path.join(dir, d.name);
+        if (d.isDirectory()) stack.push(full);
+        else if (d.isFile() && extensionOf(d.name) in IMAGE_TYPES) {
+          const key = d.name.toLowerCase();
+          byName.set(key, [...(byName.get(key) ?? []), full]);
+        }
+      }
+    }
+    return byName;
+  })();
+  nameIndexes.set(root, { built: Date.now(), index });
+  return index;
+}
+
+/**
+ * Finds the file an image reference in a Markdown document points at:
+ * relative to the document, relative to its workspace folder (vault root), or —
+ * like Obsidian — any file with that name in the workspace folder.
+ */
+async function resolveImage(doc: string, root: string | null, target: string): Promise<string | null> {
+  let ref = target.trim().replace(/^<|>$/g, "");
+  try { ref = decodeURIComponent(ref); } catch { /* keep as written */ }
+  ref = ref.split(/[?#]/)[0];
+  if (!ref) return null;
+
+  const docDir = path.dirname(doc);
+  const base = root ?? docDir;
+  const candidates = path.isAbsolute(ref) && !/^[\\/]/.test(ref)
+    ? [ref]
+    : ref.startsWith("/")
+      ? [path.join(base, ref)]
+      : [path.resolve(docDir, ref), path.resolve(base, ref)];
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  const matches = (await nameIndex(base)).get(path.basename(ref).toLowerCase());
+  // Prefer the match closest to the document (shortest path).
+  return matches?.sort((a, b) => a.length - b.length)[0] ?? null;
+}
+
 export function registerFsRoutes(app: Express) {
   app.get("/api/fs/status", (_req, res) => {
     const status: FsStatus = {
@@ -213,6 +284,7 @@ export function registerFsRoutes(app: Express) {
       home: os.homedir(),
       sep: path.sep as FsStatus["sep"],
       caseInsensitive: process.platform === "win32" || process.platform === "darwin",
+      imageToken: isFsAccessEnabled() && isLocalRequest(_req) ? IMAGE_TOKEN : "",
     };
     res.json(status);
   });
@@ -223,6 +295,36 @@ export function registerFsRoutes(app: Express) {
     });
     return;
   }
+
+  // Images for <img> tags: ?path=<file>, or ?doc=<markdown file>&root=<folder>&target=<reference>.
+  // Registered before the header guard because <img> can't send headers; the token stands in.
+  app.get("/api/fs/image", handle(async (req, res) => {
+    if (!isLocalRequest(req) || req.query.token !== IMAGE_TOKEN) throw new HttpError(403, "Forbidden");
+    const filePath = typeof req.query.path === "string"
+      ? absolutePath(req.query.path)
+      : await resolveImage(
+          absolutePath(req.query.doc),
+          typeof req.query.root === "string" && req.query.root ? absolutePath(req.query.root) : null,
+          String(req.query.target ?? ""),
+        );
+    if (!filePath) throw new HttpError(404, "Image not found");
+    const type = IMAGE_TYPES[extensionOf(filePath)];
+    if (!type) throw new HttpError(415, "Not an image");
+    const stat = await fsp.stat(filePath);
+    if (stat.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is too large");
+    await new Promise<void>((resolve, reject) => {
+      res.sendFile(filePath, {
+        dotfiles: "allow",
+        headers: {
+          "Content-Type": type,
+          "Cache-Control": "no-cache",
+          "X-Content-Type-Options": "nosniff",
+          // SVGs opened directly can't run scripts.
+          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        },
+      }, err => (err ? reject(err) : resolve()));
+    });
+  }));
 
   app.use("/api/fs", localOnlyGuard);
 

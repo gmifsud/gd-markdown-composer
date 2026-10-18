@@ -4,8 +4,31 @@
 /** Every /api/fs request must send this header (blocks cross-site form/img requests). */
 export const FS_CLIENT_HEADER = "X-MDC-Client";
 
+/** Image types the app can show (as files and inside Markdown), with their MIME types. */
+export const IMAGE_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif",
+};
+
+export function extensionOf(filePath: string) {
+  const name = filePath.slice(Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1);
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+export function isImagePath(filePath: string) {
+  return extensionOf(filePath) in IMAGE_TYPES;
+}
+
 /** How a file opens in the editor, decided by its extension. */
-export type FileKind = "md" | "json" | "yaml" | "drawio" | "text";
+export type FileKind = "md" | "json" | "yaml" | "drawio" | "image" | "text";
 
 const KIND_BY_EXTENSION: Record<string, FileKind> = {
   ".md": "md",
@@ -18,10 +41,10 @@ const KIND_BY_EXTENSION: Record<string, FileKind> = {
 };
 
 export function fileKindOf(filePath: string): FileKind {
-  const name = filePath.slice(Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1);
-  const dot = name.lastIndexOf(".");
   // A leading dot (".gitignore") is a hidden file, not an extension.
-  return dot > 0 ? KIND_BY_EXTENSION[name.slice(dot).toLowerCase()] ?? "text" : "text";
+  const ext = extensionOf(filePath);
+  if (ext in IMAGE_TYPES) return "image";
+  return KIND_BY_EXTENSION[ext] ?? "text";
 }
 
 /** Markdown, JSON and YAML open ready to edit; other files open read-only until unlocked. */
@@ -35,6 +58,11 @@ export interface FsStatus {
   sep: "/" | "\\";
   /** True on Windows and macOS, where paths compare case-insensitively. */
   caseInsensitive: boolean;
+  /**
+   * Per-launch secret for /api/fs/image. <img> tags can't send the client
+   * header, so image URLs carry this instead; other sites can't read it.
+   */
+  imageToken: string;
 }
 
 export interface FsEntry {

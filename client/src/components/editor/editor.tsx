@@ -1,12 +1,18 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import { parseAllDocuments } from "yaml";
-import { Check, Loader2, Save, Download, CheckCircle2, AlertCircle, Zap, Lock, LockOpen, PenLine, Columns2, Eye, MoveHorizontal } from "lucide-react";
+import {
+  Check, Loader2, CheckCircle2, AlertCircle, Zap, Lock, LockOpen, PenLine, Columns2, Eye, MoveHorizontal,
+  FoldVertical, ChevronRight, ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
 import { DrawioFileView } from "@/components/editor/diagrams";
+import { SaveButton } from "@/components/editor/save-button";
+import { useRootFolderOf } from "@/components/layout/path-actions";
+import { splitFrontMatter } from "@/lib/markdown-source";
 import { useAutosave, type Saver } from "@/hooks/use-autosave";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
@@ -82,6 +88,12 @@ const DOWNLOAD_TYPES = {
 
 const noopSave: Saver = async () => {};
 
+// Tighter Markdown preview: smaller type and less space between blocks.
+const COMPACT_PROSE =
+  "prose-sm leading-snug prose-p:my-1.5 prose-headings:mt-4 prose-headings:mb-1.5 prose-h1:mb-3 " +
+  "prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0 prose-pre:my-2 prose-blockquote:my-2 prose-hr:my-4 " +
+  "prose-table:my-2 prose-img:my-2";
+
 const MODES: { mode: EditorMode; label: string; icon: JSX.Element }[] = [
   { mode: "edit", label: "Edit only", icon: <PenLine className="w-3.5 h-3.5" /> },
   { mode: "split", label: "Edit and preview side by side", icon: <Columns2 className="w-3.5 h-3.5" /> },
@@ -118,11 +130,24 @@ export function Editor({ source }: EditorProps) {
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const { state: workspace } = useWorkspace();
-  const { setEditorMode, setDiagramMode, setPreviewFullWidth } = useWorkspaceActions();
+  const { setEditorMode, setDiagramMode, setPreviewFullWidth, setCompact, setFrontMatterOpen } = useWorkspaceActions();
   const isDrawio = source.fileType === "drawio";
   const mode = isDrawio ? workspace.diagramMode : workspace.editorMode;
   const setMode = isDrawio ? setDiagramMode : setEditorMode;
   const fullWidth = workspace.previewFullWidth;
+  const compact = workspace.compact;
+  const rootFolderOf = useRootFolderOf();
+  const rootFolder = source.path ? rootFolderOf(source.path)?.folder ?? null : null;
+
+  // Markdown front matter can be folded away in the source: the textarea then
+  // edits only the body and the hidden block is put back in front on change.
+  const isMarkdown = source.fileType === "md";
+  const frontMatter = useMemo(() => (isMarkdown ? splitFrontMatter(content) : null), [isMarkdown, content]);
+  const hideFrontMatter = !!frontMatter?.block && !workspace.frontMatterOpen;
+  const sourceText = hideFrontMatter && frontMatter ? frontMatter.body : content;
+  const onSourceChange = (value: string) => setContent(hideFrontMatter && frontMatter ? frontMatter.block + value : value);
+  const frontMatterRef = useRef({ hidden: hideFrontMatter, lines: frontMatter?.lines ?? 0, body: frontMatter?.body ?? content });
+  frontMatterRef.current = { hidden: hideFrontMatter, lines: frontMatter?.lines ?? 0, body: frontMatter?.body ?? content };
   const splitGroup = useRef<ImperativePanelGroupHandle>(null);
 
   const [locked, setLocked] = useState(!!source.startLocked);
@@ -139,17 +164,31 @@ export function Editor({ source }: EditorProps) {
 
   // Jumps from the Outline and search results: select the line in the source
   // (when shown) and scroll the preview to the heading or matching text.
-  useEffect(() => registerRevealHandler(source.uri, (target) => {
+  useEffect(() => registerRevealHandler(source.uri, function reveal(target) {
     const text = contentRef.current;
-    if (textareaRef.current) revealInTextarea(textareaRef.current, lineRange(text, target.line, target.query));
+    const fm = frontMatterRef.current;
+    // Lines are counted in the whole file; the preview never shows front matter.
+    const bodyLine = target.line - fm.lines;
+    if (fm.hidden && bodyLine < 0) {
+      // The target is inside the folded front matter: unfold it, then try again.
+      setFrontMatterOpen(true);
+      setTimeout(() => reveal(target), 30);
+      return;
+    }
+    if (textareaRef.current) {
+      revealInTextarea(textareaRef.current, fm.hidden
+        ? lineRange(fm.body, bodyLine, target.query)
+        : lineRange(text, target.line, target.query));
+    }
     const preview = previewScrollRef.current?.querySelector<HTMLElement>("[data-preview-root]")
       ? previewScrollRef.current
       : null;
     if (!preview) return;
     if (target.heading) revealHeadingInPreview(preview, target.heading.text, target.heading.occurrence);
-    else if (target.query) {
-      revealTextInPreview(preview, target.query, occurrencesBefore(text, target.line, target.query), !textareaRef.current);
+    else if (target.query && bodyLine >= 0) {
+      revealTextInPreview(preview, target.query, occurrencesBefore(fm.body, bodyLine, target.query), !textareaRef.current);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [source.uri]);
   const readOnly = !source.save || locked;
   const unlock = () => {
@@ -228,18 +267,34 @@ export function Editor({ source }: EditorProps) {
     </div>
   );
 
+  const paneLabelClass = `${compact ? "h-8 px-4" : "h-10 px-6"} border-b border-gray-50 flex items-center justify-between gap-2 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase`;
+
+  const frontMatterToggle = frontMatter?.block ? (
+    <button
+      className="flex items-center gap-1 normal-case tracking-normal text-[11px] font-medium text-gray-500 hover:text-gray-800 rounded px-1.5 py-0.5 hover:bg-gray-100"
+      onClick={() => setFrontMatterOpen(!workspace.frontMatterOpen)}
+      aria-expanded={workspace.frontMatterOpen}
+      title={workspace.frontMatterOpen ? "Fold the front matter away" : "Show and edit the front matter"}
+      data-testid="source-front-matter-toggle"
+    >
+      {workspace.frontMatterOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+      Front matter · {frontMatter.lines} lines
+    </button>
+  ) : null;
+
   const sourcePane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0" data-testid="source-pane">
-      <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
-        {isStructured ? formatLabel : isDrawio ? "Draw.io XML" : "Markdown"}
+      <div className={paneLabelClass}>
+        <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : "Markdown"}</span>
+        {frontMatterToggle}
       </div>
       <textarea
         ref={textareaRef}
-        className={`flex-1 resize-none p-6 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
-          analysis.error ? "border-l-2 border-red-500" : ""
-        }`}
-        value={content}
-        onChange={e => setContent(e.target.value)}
+        className={`flex-1 resize-none font-mono text-[13px] focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
+          compact ? "px-4 py-3 md:px-5 leading-snug" : "p-6 md:p-8 leading-relaxed"
+        } ${analysis.error ? "border-l-2 border-red-500" : ""}`}
+        value={sourceText}
+        onChange={e => onSourceChange(e.target.value)}
         readOnly={readOnly}
         placeholder={placeholder}
         spellCheck={false}
@@ -250,7 +305,7 @@ export function Editor({ source }: EditorProps) {
 
   const previewPane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0 bg-[#fafafa]" data-testid="preview-pane">
-      <div className="h-10 border-b border-gray-50 flex items-center px-6 bg-[#fcfcfc] shrink-0 text-[10px] font-semibold tracking-widest text-gray-400 uppercase">
+      <div className={paneLabelClass}>
         {isStructured ? "Formatted" : isDrawio ? "Diagram" : "Preview"}
       </div>
       {isDrawio ? (
@@ -258,13 +313,15 @@ export function Editor({ source }: EditorProps) {
           <DrawioFileView xml={content} />
         </div>
       ) : (
-        <div ref={previewScrollRef} className="flex-1 overflow-y-auto p-6 md:p-8">
+        <div ref={previewScrollRef} className={`flex-1 overflow-y-auto ${compact ? "px-4 py-3 md:px-6" : "p-6 md:p-8"}`}>
           {isStructured ? structuredPreview : (
             <MarkdownPreview
               content={content}
-              className={`prose prose-sm md:prose-base prose-slate prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100 ${
-                fullWidth ? "max-w-none" : `max-w-[80ch] ${mode === "preview" ? "mx-auto" : ""}`
-              }`}
+              docPath={source.path}
+              rootFolder={rootFolder}
+              className={`prose prose-slate prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100 ${
+                compact ? COMPACT_PROSE : "prose-sm md:prose-base"
+              } ${fullWidth ? "max-w-none" : `max-w-[80ch] ${mode === "preview" ? "mx-auto" : ""}`}`}
             />
           )}
         </div>
@@ -275,27 +332,27 @@ export function Editor({ source }: EditorProps) {
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-white shadow-sm ring-1 ring-black/[0.03] z-10 m-0 md:m-4 md:rounded-2xl overflow-hidden">
       {/* Editor Header */}
-      <div className="h-16 border-b border-gray-100 flex items-center px-4 md:px-8 justify-between bg-white shrink-0">
+      <div className={`${compact ? "h-11 md:px-5" : "h-14 md:px-6"} border-b border-gray-100 flex items-center px-4 justify-between gap-3 bg-white shrink-0`}>
         {source.titleEditable ? (
           <input
             value={title}
             onChange={e => setTitle(e.target.value)}
-            className="font-bold text-lg md:text-xl focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-900 w-1/2 tracking-tight"
+            className={`font-bold ${compact ? "text-base" : "text-lg"} focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-900 w-1/2 tracking-tight`}
             placeholder="Untitled Document"
           />
         ) : (
           <div className="min-w-0 w-1/2 flex flex-col">
-            <span className="font-bold text-lg md:text-xl text-gray-900 tracking-tight truncate" title={source.path}>
+            <span className={`font-bold ${compact ? "text-base" : "text-lg"} text-gray-900 tracking-tight truncate`} title={source.path}>
               {title}
             </span>
-            {source.path && (
+            {source.path && !compact && (
               <span className="text-[11px] text-gray-400 truncate" title={source.path} data-testid="editor-path">
                 {source.path}
               </span>
             )}
           </div>
         )}
-        <div className="flex items-center gap-3 md:gap-5">
+        <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {!isPlainText && !isMobile && <ModeSwitch mode={mode} onChange={setMode} />}
           {!isPlainText && !isStructured && !isDrawio && !isMobile && mode !== "edit" && (
             <button
@@ -308,6 +365,19 @@ export function Editor({ source }: EditorProps) {
               data-testid="button-full-width"
             >
               <MoveHorizontal className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {isMarkdown && !isMobile && (
+            <button
+              className={`hidden sm:flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
+                compact ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500 hover:text-gray-800"
+              }`}
+              onClick={() => setCompact(!compact)}
+              aria-pressed={compact}
+              title={compact ? "Use roomier spacing" : "Use tighter spacing"}
+              data-testid="button-compact"
+            >
+              <FoldVertical className="w-3.5 h-3.5" />
             </button>
           )}
           {isStructured && analysis.error && (
@@ -354,37 +424,19 @@ export function Editor({ source }: EditorProps) {
               size="sm"
               variant="secondary"
               onClick={handleFormat}
-              className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
+              className="h-7 rounded-full px-3 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
               data-testid="button-prettify"
             >
               <Zap className="w-3.5 h-3.5 mr-1.5" />
               Format
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={handleSaveAs}
-            className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
-            data-testid="button-save-as"
-          >
-            <Download className="w-3.5 h-3.5 mr-1.5" />
-            Save As
-          </Button>
-          {!readOnly && (
-            <Button
-              size="sm"
-              variant={status === "dirty" || status === "conflict" ? "default" : "secondary"}
-              onClick={() => void flush()}
-              disabled={status !== "dirty" && status !== "conflict"}
-              className="h-8 rounded-full px-3 md:px-5 text-xs font-semibold transition-all shadow-sm hidden sm:flex"
-              title="Save (Ctrl+S)"
-              data-testid="button-save"
-            >
-              <Save className="w-3.5 h-3.5 mr-1.5" />
-              Save
-            </Button>
-          )}
+          <SaveButton
+            canSave={!readOnly && (status === "dirty" || status === "conflict")}
+            onSave={() => void flush()}
+            onSaveAs={handleSaveAs}
+            compact={compact}
+          />
         </div>
       </div>
 
@@ -435,8 +487,8 @@ export function Editor({ source }: EditorProps) {
                 <textarea
                   ref={textareaRef}
                   className="flex-1 resize-none p-5 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-700"
-                  value={content}
-                  onChange={e => setContent(e.target.value)}
+                  value={sourceText}
+                  onChange={e => onSourceChange(e.target.value)}
                   readOnly={readOnly}
                   placeholder={placeholder}
                   spellCheck={false}
@@ -446,6 +498,8 @@ export function Editor({ source }: EditorProps) {
                 {isDrawio ? <DrawioFileView xml={content} /> : isStructured ? structuredPreview : (
                   <MarkdownPreview
                     content={content}
+                    docPath={source.path}
+                    rootFolder={rootFolder}
                     className="prose prose-sm prose-slate max-w-none prose-headings:tracking-tight"
                   />
                 )}

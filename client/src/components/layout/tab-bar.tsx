@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Code2, File, FileJson, FileText, Pin, PinOff, Trash2, Workflow, X, XSquare } from "lucide-react";
+import { Code2, File, FileJson, FileText, Image as ImageIcon, Pin, PinOff, Trash2, Workflow, X, XSquare } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -18,7 +18,7 @@ interface TabInfo {
   /** Extra text to tell apart tabs with the same name (the parent folder). */
   detail?: string;
   tooltip: string;
-  type: "md" | "json" | "yaml" | "drawio" | "text";
+  type: "md" | "json" | "yaml" | "drawio" | "image" | "text";
   path?: string;
   dbId?: number;
   rootFolder?: { folder: string; index: number } | null;
@@ -30,6 +30,7 @@ function TabIcon({ type }: { type: TabInfo["type"] }) {
   if (type === "yaml") return <Code2 className={`${cls} text-purple-500`} />;
   if (type === "md") return <FileText className={`${cls} text-gray-400`} />;
   if (type === "drawio") return <Workflow className={`${cls} text-orange-500`} />;
+  if (type === "image") return <ImageIcon className={`${cls} text-emerald-500`} />;
   return <File className={`${cls} text-gray-400`} />;
 }
 

@@ -63,6 +63,10 @@ export interface WorkspaceState {
   /** Layout for .drawio files, remembered separately (they usually want the diagram only). */
   diagramMode: EditorMode;
   explorer: { sort: ExplorerSort; showDates: boolean };
+  /** Front matter shown expanded (in the preview) and visible in the source. */
+  frontMatterOpen: boolean;
+  /** Tighter line spacing and margins in the preview and source. */
+  compact: boolean;
   /** Let rendered markdown use the whole pane instead of a readable ~80-character column. */
   previewFullWidth: boolean;
 }
@@ -83,6 +87,8 @@ const initialState: WorkspaceState = {
   diagramMode: "preview",
   explorer: { sort: "name", showDates: true },
   previewFullWidth: false,
+  frontMatterOpen: false,
+  compact: false,
 };
 
 function loadState(): WorkspaceState {
@@ -118,7 +124,9 @@ type Action =
   | { type: "editorMode"; mode: EditorMode }
   | { type: "previewFullWidth"; value: boolean }
   | { type: "diagramMode"; mode: EditorMode }
-  | { type: "explorer"; patch: Partial<WorkspaceState["explorer"]> };
+  | { type: "explorer"; patch: Partial<WorkspaceState["explorer"]> }
+  | { type: "frontMatterOpen"; value: boolean }
+  | { type: "compact"; value: boolean };
 
 const clampWidth = (w: number) => Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w)));
 
@@ -167,6 +175,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       sidebar.width = clampWidth(sidebar.width);
       return { ...state, sidebar };
     }
+    case "frontMatterOpen":
+      return { ...state, frontMatterOpen: action.value };
+    case "compact":
+      return { ...state, compact: action.value };
     case "explorer":
       return { ...state, explorer: { ...state.explorer, ...action.patch } };
     case "diagramMode":
@@ -264,6 +276,8 @@ export function useWorkspaceActions() {
     setPreviewFullWidth: (value: boolean) => dispatch({ type: "previewFullWidth", value }),
     setDiagramMode: (mode: EditorMode) => dispatch({ type: "diagramMode", mode }),
     setExplorer: (patch: Partial<WorkspaceState["explorer"]>) => dispatch({ type: "explorer", patch }),
+    setFrontMatterOpen: (value: boolean) => dispatch({ type: "frontMatterOpen", value }),
+    setCompact: (value: boolean) => dispatch({ type: "compact", value }),
   };
 }
 

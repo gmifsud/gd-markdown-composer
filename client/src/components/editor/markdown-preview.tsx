@@ -1,22 +1,55 @@
-import { memo, type ComponentPropsWithoutRef, type MouseEvent } from "react";
+import { createContext, memo, useContext, useMemo, useState, type ComponentPropsWithoutRef, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { useLocation } from "wouter";
+import { ChevronDown, ChevronRight, ImageOff } from "lucide-react";
 import { DiagramBlock, DIAGRAM_LANGUAGES } from "@/components/editor/diagrams";
 import { Expandable } from "@/components/editor/lightbox";
+import { useFsStatus } from "@/lib/fs-api";
+import { rewriteWikiEmbeds, splitFrontMatter, WIDTH_TITLE_PREFIX } from "@/lib/markdown-source";
+import { useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 
-// Heading ids get a prefix (as on GitHub) so a heading like "# Root" can't
-// collide with ids used by the app itself. `#section` links are mapped to it.
-const HEADING_ID_PREFIX = "user-content-";
+// Ids from the document (headings, footnotes, raw HTML) get a prefix, as on
+// GitHub, so they can't collide with ids the app uses. `#section` links map to it.
+const ID_PREFIX = "user-content-";
+
+// Raw HTML in notes (<img>, <details>, <kbd>…) is rendered, then sanitised:
+// scripts, event handlers and unsafe URLs are removed.
+const sanitizeSchema = {
+  ...defaultSchema,
+  clobberPrefix: ID_PREFIX,
+  tagNames: [...(defaultSchema.tagNames ?? []), "mark", "u", "center", "figure", "figcaption"],
+  attributes: {
+    ...defaultSchema.attributes,
+    img: [...(defaultSchema.attributes?.img ?? []), "title", "width", "height", "align", "className"],
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "align"],
+  },
+};
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins: NonNullable<ComponentPropsWithoutRef<typeof ReactMarkdown>["rehypePlugins"]> = [
-  [rehypeSlug, { prefix: HEADING_ID_PREFIX }],
+  rehypeRaw,
+  [rehypeSanitize, sanitizeSchema],
+  // After sanitising, so heading ids get the prefix exactly once.
+  [rehypeSlug, { prefix: ID_PREFIX }],
 ];
+// Footnote ids are prefixed by the sanitiser, so don't prefix them here as well.
+const remarkRehypeOptions = { clobberPrefix: "" };
 
 const EXTERNAL_LINK = /^(https?:|mailto:)/i;
 const IN_APP_DOCUMENT_LINK = /^\/d\/\d+$/;
+const EXTERNAL_IMAGE = /^(https?:|data:|blob:)/i;
+
+/** Where the document lives, so relative and ![[…]] images can be found. */
+interface PreviewSource {
+  docPath?: string;
+  rootFolder?: string | null;
+}
+
+const PreviewSourceContext = createContext<PreviewSource>({});
 
 type LinkProps = ComponentPropsWithoutRef<"a"> & { node?: unknown };
 
@@ -25,11 +58,12 @@ function PreviewLink({ href, children, node: _node, ...rest }: LinkProps) {
 
   if (!href) return <a {...rest}>{children}</a>;
 
-  // In-page anchors scroll inside the preview pane.
+  // In-page anchors (headings, footnotes) scroll inside the preview pane.
   if (href.startsWith("#")) {
     const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
       e.preventDefault();
-      const id = HEADING_ID_PREFIX + decodeURIComponent(href.slice(1));
+      const raw = decodeURIComponent(href.slice(1));
+      const id = raw.startsWith(ID_PREFIX) ? raw : ID_PREFIX + raw;
       const root = e.currentTarget.closest("[data-preview-root]");
       root?.querySelector(`#${CSS.escape(id)}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
@@ -88,33 +122,130 @@ function PreviewPre({ node, children, ...rest }: ComponentPropsWithoutRef<"pre">
   return <pre {...rest}>{children}</pre>;
 }
 
-/** Images get an Expand button that opens them full screen. */
-function PreviewImage({ node: _node, src, alt, ...rest }: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
-  if (!src) return <img alt={alt} {...rest} />;
+/** Local images load through the app's server, which finds them on disk. */
+function useImageUrl(src: string | undefined) {
+  const { docPath, rootFolder } = useContext(PreviewSourceContext);
+  const { data: status } = useFsStatus();
+  if (!src || EXTERNAL_IMAGE.test(src) || !docPath || !status?.imageToken) return src;
+  const params = new URLSearchParams({ token: status.imageToken, doc: docPath, target: src });
+  if (rootFolder) params.set("root", rootFolder);
+  return `/api/fs/image?${params}`;
+}
+
+/** Images resolve against the document's folder and get an Expand button. */
+function PreviewImage({ node: _node, src, alt, title, width, ...rest }: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
+  const url = useImageUrl(src);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  // ![[image.png|300]] carries its width in the title.
+  const widthHint = title?.startsWith(WIDTH_TITLE_PREFIX) ? title.slice(WIDTH_TITLE_PREFIX.length) : undefined;
+  if (!url) return <img alt={alt} {...rest} />;
+  if (failedUrl === url) {
+    return (
+      <span className="not-prose inline-flex items-center gap-1.5 rounded border border-dashed border-gray-300 px-2 py-1 text-[12px] text-gray-500" data-testid="image-missing">
+        <ImageOff className="w-3.5 h-3.5" /> Image not found: {src}
+      </span>
+    );
+  }
   return (
     <Expandable
       inline
       title={alt || "Image"}
-      renderFull={() => <img className="w-full h-full object-contain" src={src} alt={alt} draggable={false} />}
+      renderFull={() => <img className="w-full h-full object-contain" src={url} alt={alt} draggable={false} />}
     >
-      <img src={src} alt={alt} {...rest} />
+      <img
+        src={url}
+        alt={alt}
+        title={widthHint ? alt : title}
+        width={widthHint ?? width}
+        loading="lazy"
+        onError={() => setFailedUrl(url)}
+        {...rest}
+      />
     </Expandable>
   );
 }
 
 const components: Components = { a: PreviewLink, pre: PreviewPre, img: PreviewImage };
 
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/** YAML front matter as a compact, collapsible "Properties" block. */
+function FrontMatterCard({ data, raw }: { data: Record<string, unknown> | null; raw: string }) {
+  const { state } = useWorkspace();
+  const { setFrontMatterOpen } = useWorkspaceActions();
+  const open = state.frontMatterOpen;
+  const entries = data ? Object.entries(data) : [];
+  const summary = entries.slice(0, 4).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : formatValue(v)}`).join(" · ");
+
+  return (
+    <div className="not-prose mb-4 rounded-md border border-gray-200 bg-gray-50/80 text-[12px] text-gray-600" data-front-matter data-testid="front-matter">
+      <button
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-gray-100 rounded-md"
+        onClick={() => setFrontMatterOpen(!open)}
+        aria-expanded={open}
+        data-testid="front-matter-toggle"
+      >
+        {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
+        <span className="font-semibold text-gray-700 shrink-0">Properties</span>
+        <span className="text-gray-400 shrink-0">({entries.length || "invalid YAML"})</span>
+        {!open && <span className="truncate text-gray-500">{summary}</span>}
+      </button>
+      {open && (
+        data ? (
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 px-3 pb-2 pt-0.5">
+            {entries.map(([key, value]) => (
+              <div key={key} className="contents">
+                <dt className="text-gray-500">{key}</dt>
+                <dd className="min-w-0 break-words text-gray-800">
+                  {Array.isArray(value)
+                    ? <span className="flex flex-wrap gap-1">{value.map((v, i) => (
+                        <span key={i} className="rounded-full bg-white border border-gray-200 px-1.5 leading-5">{formatValue(v)}</span>
+                      ))}</span>
+                    : formatValue(value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <pre className="px-3 pb-2 whitespace-pre-wrap font-mono text-[11px]">{raw}</pre>
+        )
+      )}
+    </div>
+  );
+}
+
 interface MarkdownPreviewProps {
   content: string;
   className?: string;
+  /** Absolute path of the document, for resolving relative images. */
+  docPath?: string;
+  /** Workspace folder the document is in (an Obsidian vault root). */
+  rootFolder?: string | null;
 }
 
-export const MarkdownPreview = memo(function MarkdownPreview({ content, className }: MarkdownPreviewProps) {
+export const MarkdownPreview = memo(function MarkdownPreview({ content, className, docPath, rootFolder }: MarkdownPreviewProps) {
+  const { block, body, data } = useMemo(() => splitFrontMatter(content), [content]);
+  const markdown = useMemo(() => rewriteWikiEmbeds(body), [body]);
+  const source = useMemo(() => ({ docPath, rootFolder }), [docPath, rootFolder]);
+
   return (
-    <div className={className} data-preview-root>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-        {content || "*Nothing to preview*"}
-      </ReactMarkdown>
-    </div>
+    <PreviewSourceContext.Provider value={source}>
+      <div className={className} data-preview-root>
+        {block && <FrontMatterCard data={data} raw={block} />}
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          remarkRehypeOptions={remarkRehypeOptions}
+          components={components}
+        >
+          {markdown.trim() ? markdown : "*Nothing to preview*"}
+        </ReactMarkdown>
+      </div>
+    </PreviewSourceContext.Provider>
   );
 });

@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { format } from "date-fns";
 import {
   ChevronDown, ChevronRight, File, FileJson, FileText, Code2, Folder, FolderOpen, FolderPlus,
-  Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock,
+  Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock, Image as ImageIcon,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
@@ -28,6 +28,7 @@ function fileIcon(name: string) {
   if (type === "yaml") return <Code2 className="w-3.5 h-3.5 shrink-0 text-purple-400" />;
   if (type === "md") return <FileText className="w-3.5 h-3.5 shrink-0 text-gray-300" />;
   if (type === "drawio") return <Workflow className="w-3.5 h-3.5 shrink-0 text-orange-400" />;
+  if (type === "image") return <ImageIcon className="w-3.5 h-3.5 shrink-0 text-emerald-400" />;
   return <File className="w-3.5 h-3.5 shrink-0 text-[#858585]" />;
 }
 
