@@ -3,6 +3,7 @@ import { promises as fsp } from "fs";
 import { randomBytes } from "crypto";
 import os from "os";
 import path from "path";
+import { readWorkbook } from "./office";
 import {
   FS_CLIENT_HEADER, IMAGE_TYPES, extensionOf,
   type FsCreateRequest, type FsEntry, type FsListResponse, type FsReadResponse,
@@ -361,6 +362,30 @@ export function registerFsRoutes(app: Express) {
     res.on("close", () => { if (!res.writableEnded) aborted = true; });
     const result = await searchFolders({ roots, query, contents: !!body.contents }, () => aborted);
     if (!aborted) res.json(result);
+  }));
+
+  // Raw bytes of a file (Word documents are rendered in the page).
+  app.get("/api/fs/raw", handle(async (req, res) => {
+    const filePath = absolutePath(req.query.path);
+    const stat = await fsp.stat(filePath);
+    if (stat.isDirectory()) throw new HttpError(400, "Not a file");
+    if (stat.size > MAX_IMAGE_BYTES) throw new HttpError(413, "File is too large");
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.send(await fsp.readFile(filePath));
+  }));
+
+  // Spreadsheets as JSON (read with ExcelJS).
+  app.get("/api/fs/xlsx", handle(async (req, res) => {
+    const filePath = absolutePath(req.query.path);
+    if (!/\.(xlsx|xlsm)$/i.test(filePath)) throw new HttpError(415, "Only .xlsx and .xlsm workbooks can be read");
+    const stat = await fsp.stat(filePath);
+    if (stat.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Workbook is too large");
+    try {
+      res.json(await readWorkbook(filePath));
+    } catch (err) {
+      throw new HttpError(422, `Couldn't read this workbook: ${(err as Error).message}`);
+    }
   }));
 
   app.get("/api/fs/read", handle(async (req, res) => {

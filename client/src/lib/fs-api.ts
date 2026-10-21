@@ -5,6 +5,7 @@ import {
   type FsSearchRequest, type FsSearchResponse,
   type FsStatus, type FsWriteRequest, type FsWriteResponse,
 } from "@shared/fs";
+import type { XlsxResponse } from "@shared/office";
 
 /** Thrown for 409 responses: the file changed on disk, or a new file's name is taken. */
 export class FsConflictError extends Error {}
@@ -37,6 +38,13 @@ export const fsApi = {
     fsFetch<FsWriteResponse>("/api/fs/write", { method: "PUT", body: JSON.stringify(body), keepalive: options.keepalive }),
   search: (body: FsSearchRequest, signal?: AbortSignal) =>
     fsFetch<FsSearchResponse>("/api/fs/search", { method: "POST", body: JSON.stringify(body), signal }),
+  /** File contents as bytes (Word documents). */
+  raw: async (file: string) => {
+    const res = await fetch(`/api/fs/raw?path=${encodeURIComponent(file)}`, { headers: { [FS_CLIENT_HEADER]: "1" } });
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? res.statusText);
+    return res.arrayBuffer();
+  },
+  xlsx: (file: string) => fsFetch<XlsxResponse>(`/api/fs/xlsx?path=${encodeURIComponent(file)}`),
   create: (body: FsCreateRequest) =>
     fsFetch<FsWriteResponse>("/api/fs/create", { method: "POST", body: JSON.stringify(body) }),
 };
@@ -55,6 +63,8 @@ export function useFsStatus() {
 interface DesktopBridge {
   pickFolders(): Promise<string[]>;
   revealPath(path: string): Promise<void>;
+  /** Opens a document in its default app (Word, Excel…). Missing in older builds. */
+  openPath?(path: string): Promise<string>;
 }
 
 declare global {

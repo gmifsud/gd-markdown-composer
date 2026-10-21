@@ -108,3 +108,27 @@
   animation: mdc-flash 1.4s ease-out;
   border-radius: 4px;
 }
+
+/* Explorer row revealed from a tab or the editor. */
+@keyframes mdc-reveal {
+  0%, 40% { background-color: rgba(0, 127, 212, 0.55); }
+  100% { background-color: transparent; }
+}
+.mdc-reveal {
+  animation: mdc-reveal 1.6s ease-out;
+}
+
+/* Find: the highlight layer behind the source textarea keeps a scrollbar's
+   width (so text wraps identically) but doesn't draw it. */
+.mirror-scroll::-webkit-scrollbar-thumb,
+.mirror-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Find: matches in the preview (CSS Custom Highlight API). */
+::highlight(mdc-find) {
+  background-color: rgba(250, 204, 21, 0.45);
+}
+::highlight(mdc-find-current) {
+  background-color: rgba(249, 115, 22, 0.65);
+}

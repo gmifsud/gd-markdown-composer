@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, FileWarning, Loader2 } from "lucide-react";
 import { Editor, type EditorSource } from "@/components/editor/editor";
 import { ImageFileView } from "@/components/editor/image-view";
+import { DocxView, XlsxView } from "@/components/editor/office-view";
 import { Button } from "@/components/ui/button";
 import { useDocument, saveDocument, cacheSavedDocument } from "@/hooks/use-documents";
 import type { Saver } from "@/hooks/use-autosave";
@@ -70,7 +71,12 @@ export function DocumentEditor({ id }: { id: number }) {
 // ── Files on disk ────────────────────────────────────────────────────────────
 
 export function FileEditor({ path, uri }: { path: string; uri: string }) {
-  return fileKindOf(path) === "image" ? <ImageFileView path={path} /> : <TextFileEditor path={path} uri={uri} />;
+  switch (fileKindOf(path)) {
+    case "image": return <ImageFileView path={path} />;
+    case "docx": return <DocxView path={path} />;
+    case "xlsx": return <XlsxView path={path} />;
+    default: return <TextFileEditor path={path} uri={uri} />;
+  }
 }
 
 function TextFileEditor({ path, uri }: { path: string; uri: string }) {

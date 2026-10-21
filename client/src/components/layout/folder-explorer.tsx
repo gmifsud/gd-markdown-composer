@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   ChevronDown, ChevronRight, File, FileJson, FileText, Code2, Folder, FolderOpen, FolderPlus,
-  Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock, Image as ImageIcon,
+  Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock, Image as ImageIcon, LocateFixed,
+  FileType, FileSpreadsheet,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
@@ -15,6 +16,7 @@ import {
 import { useFolderDialogs } from "@/components/layout/folder-dialogs";
 import { PathMenuItems, useIsInside, useTabsInFolder } from "@/components/layout/path-actions";
 import { ExplorerSearchBox, FilteredTree, useExplorerSearch } from "@/components/layout/explorer-search";
+import { setRevealTarget, useRevealInExplorer, useRevealTarget } from "@/components/layout/explorer-reveal";
 import { useDebounce } from "@/hooks/use-debounce";
 import { baseName, fsApi, fsKeys, useFsStatus } from "@/lib/fs-api";
 import { fileUri, folderColour, useWorkspace, useWorkspaceActions, type ExplorerSort } from "@/lib/workspace";
@@ -29,6 +31,8 @@ function fileIcon(name: string) {
   if (type === "md") return <FileText className="w-3.5 h-3.5 shrink-0 text-gray-300" />;
   if (type === "drawio") return <Workflow className="w-3.5 h-3.5 shrink-0 text-orange-400" />;
   if (type === "image") return <ImageIcon className="w-3.5 h-3.5 shrink-0 text-emerald-400" />;
+  if (type === "docx") return <FileType className="w-3.5 h-3.5 shrink-0 text-blue-400" />;
+  if (type === "xlsx") return <FileSpreadsheet className="w-3.5 h-3.5 shrink-0 text-green-400" />;
   return <File className="w-3.5 h-3.5 shrink-0 text-[#858585]" />;
 }
 
@@ -38,6 +42,15 @@ export function FolderExplorer() {
   const { state } = useWorkspace();
   const { openFolder } = useFolderDialogs();
   const queryClient = useQueryClient();
+
+  const { activeUri } = useWorkspace();
+  const reveal = useRevealInExplorer();
+
+  // "Follow the active file": unfold to and highlight each file you switch to.
+  useEffect(() => {
+    if (state.explorer.autoReveal && activeUri?.startsWith("file:")) reveal(activeUri, { quiet: true, keepPanel: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUri, state.explorer.autoReveal]);
 
   const refreshAll = () => {
     queryClient.invalidateQueries({ queryKey: ["fs-list"] });
@@ -78,6 +91,15 @@ export function FolderExplorer() {
         <span className="text-[11px] font-semibold tracking-widest uppercase text-[#bbbbbb]">Explorer</span>
         {status?.enabled && (
           <div className="flex items-center gap-0.5">
+            <button
+              className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e] disabled:opacity-40"
+              onClick={() => activeUri && reveal(activeUri)}
+              disabled={!activeUri?.startsWith("file:")}
+              title="Reveal the active file"
+              data-testid="button-reveal-active"
+            >
+              <LocateFixed className="w-3.5 h-3.5" />
+            </button>
             <SortMenu />
             <button
               className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e]"
@@ -215,7 +237,7 @@ function FolderRoot({ folder, index, filtered }: {
 function SortMenu() {
   const { state } = useWorkspace();
   const { setExplorer } = useWorkspaceActions();
-  const { sort, showDates } = state.explorer;
+  const { sort, showDates, autoReveal } = state.explorer;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -240,6 +262,13 @@ function SortMenu() {
           data-testid="toggle-show-dates"
         >
           Show modified date and time
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={autoReveal}
+          onCheckedChange={(checked) => setExplorer({ autoReveal: !!checked })}
+          data-testid="toggle-auto-reveal"
+        >
+          Follow the active file
         </DropdownMenuCheckboxItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -289,14 +318,29 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
 
   const activate = () => (isDir ? setExpanded(entry.path, !expanded) : open(fileUri(entry.path)));
 
+  // Scroll to and flash this row when it is the reveal target.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const revealTarget = useRevealTarget();
+  useEffect(() => {
+    if (!revealTarget || revealTarget.toLowerCase() !== entry.path.toLowerCase() || !rowRef.current) return;
+    const row = rowRef.current;
+    row.scrollIntoView({ block: "center" });
+    row.classList.remove("mdc-reveal");
+    void row.offsetWidth;
+    row.classList.add("mdc-reveal");
+    setRevealTarget(null);
+  }, [revealTarget, entry.path]);
+
   return (
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
+            ref={rowRef}
             role="treeitem"
             aria-expanded={isDir ? expanded : undefined}
             aria-selected={isActive}
+            data-path={entry.path}
             tabIndex={0}
             className={`flex items-center gap-1.5 pr-2 h-[22px] cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#007fd4] ${
               isActive ? "bg-[#37373d] text-white" : "hover:bg-[#2a2d2e] text-[#cccccc]"

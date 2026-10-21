@@ -23,7 +23,7 @@ const MIRRORED_STYLES = [
 ] as const;
 
 /** Pixel offset of character `offset` inside a textarea, accounting for soft wrapping. */
-function caretTop(ta: HTMLTextAreaElement, offset: number) {
+export function caretTop(ta: HTMLTextAreaElement, offset: number) {
   const style = getComputedStyle(ta);
   const mirror = document.createElement("div");
   for (const prop of MIRRORED_STYLES) mirror.style[prop] = style[prop];

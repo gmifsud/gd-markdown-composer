@@ -28,7 +28,7 @@ export function isImagePath(filePath: string) {
 }
 
 /** How a file opens in the editor, decided by its extension. */
-export type FileKind = "md" | "json" | "yaml" | "drawio" | "image" | "text";
+export type FileKind = "md" | "json" | "yaml" | "drawio" | "image" | "docx" | "xlsx" | "text";
 
 const KIND_BY_EXTENSION: Record<string, FileKind> = {
   ".md": "md",
@@ -38,6 +38,9 @@ const KIND_BY_EXTENSION: Record<string, FileKind> = {
   ".yml": "yaml",
   ".drawio": "drawio",
   ".dio": "drawio",
+  ".docx": "docx",
+  ".xlsx": "xlsx",
+  ".xlsm": "xlsx",
 };
 
 export function fileKindOf(filePath: string): FileKind {

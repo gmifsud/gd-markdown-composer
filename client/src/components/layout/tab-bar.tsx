@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Code2, File, FileJson, FileText, Image as ImageIcon, Pin, PinOff, Trash2, Workflow, X, XSquare } from "lucide-react";
+import {
+  Code2, File, FileJson, FileSpreadsheet, FileText, FileType, Image as ImageIcon, LocateFixed, Pin, PinOff, Trash2,
+  Workflow, X, XSquare,
+} from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { PathMenuItems, useRootFolderOf, useTabsInFolder } from "@/components/layout/path-actions";
+import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { useDeleteDocument, useDocuments } from "@/hooks/use-documents";
 import { baseName } from "@/lib/fs-api";
 import {
   folderColour, orderedTabs, parseUri, useWorkspace, useWorkspaceActions,
 } from "@/lib/workspace";
-import { fileKindOf } from "@shared/fs";
+import { fileKindOf, type FileKind } from "@shared/fs";
 
 interface TabInfo {
   uri: string;
@@ -18,7 +22,7 @@ interface TabInfo {
   /** Extra text to tell apart tabs with the same name (the parent folder). */
   detail?: string;
   tooltip: string;
-  type: "md" | "json" | "yaml" | "drawio" | "image" | "text";
+  type: FileKind;
   path?: string;
   dbId?: number;
   rootFolder?: { folder: string; index: number } | null;
@@ -31,6 +35,8 @@ function TabIcon({ type }: { type: TabInfo["type"] }) {
   if (type === "md") return <FileText className={`${cls} text-gray-400`} />;
   if (type === "drawio") return <Workflow className={`${cls} text-orange-500`} />;
   if (type === "image") return <ImageIcon className={`${cls} text-emerald-500`} />;
+  if (type === "docx") return <FileType className={`${cls} text-blue-600`} />;
+  if (type === "xlsx") return <FileSpreadsheet className={`${cls} text-green-600`} />;
   return <File className={`${cls} text-gray-400`} />;
 }
 
@@ -49,6 +55,7 @@ export function TabBar() {
   const rootFolderOf = useRootFolderOf();
   const tabsInFolder = useTabsInFolder();
   const scroller = useRef<HTMLDivElement>(null);
+  const reveal = useRevealInExplorer();
 
   // Drop tabs of database documents that no longer exist.
   useEffect(() => {
@@ -181,6 +188,9 @@ export function TabBar() {
             <XSquare className="w-3.5 h-3.5 mr-2" /> Close All
           </ContextMenuItem>
           <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => reveal(tab.uri)} data-testid="menu-reveal">
+            <LocateFixed className="w-3.5 h-3.5 mr-2" /> {tab.path ? "Reveal in Explorer" : "Reveal in Documents"}
+          </ContextMenuItem>
           <ContextMenuItem onSelect={() => togglePin(tab.uri)}>
             {pinned
               ? <><PinOff className="w-3.5 h-3.5 mr-2" /> Unpin</>

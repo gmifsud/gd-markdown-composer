@@ -11,7 +11,11 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
 import { DrawioFileView } from "@/components/editor/diagrams";
 import { SaveButton } from "@/components/editor/save-button";
+import {
+  FindBar, SourceTextarea, clearPreviewPaint, findMatches, paintPreview, previewRanges,
+} from "@/components/editor/find";
 import { useRootFolderOf } from "@/components/layout/path-actions";
+import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { splitFrontMatter } from "@/lib/markdown-source";
 import { useAutosave, type Saver } from "@/hooks/use-autosave";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -19,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useWorkspace, useWorkspaceActions, type EditorMode } from "@/lib/workspace";
 import { clearActiveEditor, publishActiveEditor, registerRevealHandler } from "@/lib/active-editor";
 import {
-  lineRange, occurrencesBefore, revealHeadingInPreview, revealInTextarea, revealTextInPreview,
+  caretTop, lineRange, occurrencesBefore, revealHeadingInPreview, revealInTextarea, revealTextInPreview,
 } from "@/components/editor/reveal";
 
 /** What the editor shows and how it saves: a database document or a file on disk. */
@@ -88,6 +92,15 @@ const DOWNLOAD_TYPES = {
 
 const noopSave: Saver = async () => {};
 
+/**
+ * Which occurrence (0-based) the match at `offset` is, counting from the start
+ * of the body: the preview shows no front matter, so matches inside a visible
+ * front matter block (`skip` characters) are not counted.
+ */
+function occurrencesBeforeOffset(text: string, offset: number, query: string, matchCase: boolean, skip: number) {
+  return findMatches(text.slice(0, offset), query, matchCase).filter(([start]) => start >= skip).length;
+}
+
 // Tighter Markdown preview: smaller type and less space between blocks.
 const COMPACT_PROSE =
   "prose-sm leading-snug prose-p:my-1.5 prose-headings:mt-4 prose-headings:mb-1.5 prose-h1:mb-3 " +
@@ -137,6 +150,7 @@ export function Editor({ source }: EditorProps) {
   const fullWidth = workspace.previewFullWidth;
   const compact = workspace.compact;
   const rootFolderOf = useRootFolderOf();
+  const revealInExplorer = useRevealInExplorer();
   const rootFolder = source.path ? rootFolderOf(source.path)?.folder ?? null : null;
 
   // Markdown front matter can be folded away in the source: the textarea then
@@ -190,6 +204,95 @@ export function Editor({ source }: EditorProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [source.uri]);
+  // ── Find in document (Ctrl+F, F3 / Shift+F3) ──────────────────────────────
+  const [find, setFind] = useState({ open: false, query: "", matchCase: false, index: 0, focus: 0 });
+  const [previewMatchCount, setPreviewMatchCount] = useState(0);
+  // The source pane is where matches are counted and stepped through when it
+  // is visible; in preview-only layout the preview's own text is used.
+  const sourceShown = isMobile || source.fileType === "text" || mode !== "preview";
+  const sourceMatches = useMemo(
+    () => (find.open ? findMatches(sourceText, find.query, find.matchCase) : []),
+    [find.open, sourceText, find.query, find.matchCase],
+  );
+  const findTotal = sourceShown ? sourceMatches.length : previewMatchCount;
+  const findIndex = findTotal ? Math.min(find.index, findTotal - 1) : -1;
+
+  const firstMatchFromCaret = (query: string, matchCase: boolean) => {
+    const caret = textareaRef.current?.selectionStart ?? 0;
+    const matches = findMatches(sourceText, query, matchCase);
+    const at = matches.findIndex(([start]) => start >= caret);
+    return at < 0 ? 0 : at;
+  };
+
+  const openFind = () => {
+    const ta = textareaRef.current;
+    const selected = ta && document.activeElement === ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+    const query = selected && selected.length <= 200 && !selected.includes("\n") ? selected : find.query;
+    setFind(f => ({ ...f, open: true, query, index: firstMatchFromCaret(query, f.matchCase), focus: f.focus + 1 }));
+  };
+  const stepFind = (delta: number) => {
+    if (!findTotal) return;
+    setFind(f => ({ ...f, open: true, index: (Math.max(0, Math.min(f.index, findTotal - 1)) + delta + findTotal) % findTotal }));
+  };
+  const closeFind = () => {
+    const match = sourceShown ? sourceMatches[findIndex] : undefined;
+    setFind(f => ({ ...f, open: false }));
+    clearPreviewPaint();
+    // Leave the current match selected in the source, as editors do.
+    const ta = textareaRef.current;
+    if (ta && match) {
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(match[0], match[1]);
+    }
+  };
+
+  const findKeys = useRef({ openFind, stepFind, hasQuery: false });
+  findKeys.current = { openFind, stepFind, hasQuery: !!find.query };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        findKeys.current.openFind();
+      } else if (e.key === "F3" && findKeys.current.hasQuery) {
+        e.preventDefault();
+        findKeys.current.stepFind(e.shiftKey ? -1 : 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Scroll the source to the current match (without taking focus from the find box).
+  useEffect(() => {
+    if (!find.open || !sourceShown) return;
+    const ta = textareaRef.current;
+    const match = sourceMatches[findIndex];
+    if (!ta || !match) return;
+    ta.scrollTop = Math.max(0, caretTop(ta, match[0]) - ta.clientHeight / 3);
+  }, [find.open, sourceShown, sourceMatches, findIndex]);
+
+  // Highlight matches in the preview; in preview-only layout, step through them there.
+  useEffect(() => {
+    const container = previewScrollRef.current;
+    if (!find.open || !container) {
+      clearPreviewPaint();
+      return;
+    }
+    const ranges = previewRanges(container, find.query, find.matchCase);
+    setPreviewMatchCount(ranges.length);
+    const current = sourceShown
+      ? (sourceMatches[findIndex] ? Math.min(occurrencesBeforeOffset(sourceText, sourceMatches[findIndex][0], find.query, find.matchCase, frontMatterRef.current.hidden ? 0 : frontMatter?.block.length ?? 0), ranges.length - 1) : -1)
+      : Math.min(find.index, ranges.length - 1);
+    paintPreview(ranges, current);
+    const range = ranges[current];
+    if (range) {
+      const box = container.getBoundingClientRect();
+      const rect = range.getBoundingClientRect();
+      if (rect.top < box.top || rect.bottom > box.bottom) container.scrollTop += rect.top - box.top - box.height / 3;
+    }
+  });
+  useEffect(() => () => clearPreviewPaint(), []);
+
   const readOnly = !source.save || locked;
   const unlock = () => {
     setLocked(false);
@@ -288,9 +391,10 @@ export function Editor({ source }: EditorProps) {
         <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : "Markdown"}</span>
         {frontMatterToggle}
       </div>
-      <textarea
+      <SourceTextarea
         ref={textareaRef}
-        className={`flex-1 resize-none font-mono text-[13px] focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
+        highlights={find.open ? { ranges: sourceMatches, current: findIndex } : undefined}
+        className={`resize-none font-mono text-[13px] focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
           compact ? "px-4 py-3 md:px-5 leading-snug" : "p-6 md:p-8 leading-relaxed"
         } ${analysis.error ? "border-l-2 border-red-500" : ""}`}
         value={sourceText}
@@ -346,9 +450,14 @@ export function Editor({ source }: EditorProps) {
               {title}
             </span>
             {source.path && !compact && (
-              <span className="text-[11px] text-gray-400 truncate" title={source.path} data-testid="editor-path">
+              <button
+                className="text-left text-[11px] text-gray-400 hover:text-[#007fd4] truncate"
+                onClick={() => revealInExplorer(source.uri)}
+                title={`${source.path}\nClick to reveal in Explorer`}
+                data-testid="editor-path"
+              >
                 {source.path}
-              </span>
+              </button>
             )}
           </div>
         )}
@@ -441,16 +550,31 @@ export function Editor({ source }: EditorProps) {
       </div>
 
       {/* Editor Body - plain text viewer / Split Desktop / Tabbed Mobile */}
-      <div className="flex-1 flex flex-col min-h-0 bg-white">
+      <div className="relative flex-1 flex flex-col min-h-0 bg-white">
+        {find.open && (
+          <FindBar
+            query={find.query}
+            matchCase={find.matchCase}
+            current={findIndex}
+            total={findTotal}
+            focusRequest={find.focus}
+            onQuery={(query) => setFind(f => ({ ...f, query, index: firstMatchFromCaret(query, f.matchCase) }))}
+            onMatchCase={(matchCase) => setFind(f => ({ ...f, matchCase, index: firstMatchFromCaret(f.query, matchCase) }))}
+            onNext={() => stepFind(1)}
+            onPrevious={() => stepFind(-1)}
+            onClose={closeFind}
+          />
+        )}
         {isPlainText ? (
-          <textarea
+          <SourceTextarea
             ref={textareaRef}
-            className="flex-1 resize-none p-5 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent text-gray-700 whitespace-pre"
-            value={content}
-            onChange={e => setContent(e.target.value)}
+            noWrap
+            highlights={find.open ? { ranges: sourceMatches, current: findIndex } : undefined}
+            className="resize-none p-5 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent text-gray-700"
+            value={sourceText}
+            onChange={e => onSourceChange(e.target.value)}
             readOnly={readOnly}
             spellCheck={false}
-            wrap="off"
             data-testid="editor-textarea"
           />
         ) : !isMobile ? (
@@ -484,9 +608,10 @@ export function Editor({ source }: EditorProps) {
                 </TabsList>
               </div>
               <TabsContent value="edit" className="flex-1 p-0 m-0 data-[state=active]:flex flex-col min-h-0">
-                <textarea
+                <SourceTextarea
                   ref={textareaRef}
-                  className="flex-1 resize-none p-5 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-700"
+                  highlights={find.open ? { ranges: sourceMatches, current: findIndex } : undefined}
+                  className="resize-none p-5 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-700"
                   value={sourceText}
                   onChange={e => onSourceChange(e.target.value)}
                   readOnly={readOnly}

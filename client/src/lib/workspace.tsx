@@ -62,7 +62,8 @@ export interface WorkspaceState {
   editorMode: EditorMode;
   /** Layout for .drawio files, remembered separately (they usually want the diagram only). */
   diagramMode: EditorMode;
-  explorer: { sort: ExplorerSort; showDates: boolean };
+  /** autoReveal: the explorer follows the active tab (unfolds to and highlights its file). */
+  explorer: { sort: ExplorerSort; showDates: boolean; autoReveal: boolean };
   /** Front matter shown expanded (in the preview) and visible in the source. */
   frontMatterOpen: boolean;
   /** Tighter line spacing and margins in the preview and source. */
@@ -85,7 +86,7 @@ const initialState: WorkspaceState = {
   sidebar: { visible: true, width: SIDEBAR_DEFAULT_WIDTH, panel: "explorer" },
   editorMode: "split",
   diagramMode: "preview",
-  explorer: { sort: "name", showDates: true },
+  explorer: { sort: "name", showDates: true, autoReveal: false },
   previewFullWidth: false,
   frontMatterOpen: false,
   compact: false,
@@ -119,6 +120,7 @@ type Action =
   | { type: "addFolders"; paths: string[] }
   | { type: "removeFolder"; path: string }
   | { type: "setExpanded"; path: string; expanded: boolean }
+  | { type: "expandMany"; paths: string[] }
   | { type: "sidebar"; patch: Partial<WorkspaceState["sidebar"]> }
   | { type: "pruneDb"; existingIds: number[] }
   | { type: "editorMode"; mode: EditorMode }
@@ -162,6 +164,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     }
     case "removeFolder":
       return { ...state, folders: state.folders.filter(f => f !== action.path) };
+    case "expandMany": {
+      const missing = action.paths.filter(p => !state.expanded.includes(p));
+      return missing.length ? { ...state, expanded: [...state.expanded, ...missing] } : state;
+    }
     case "setExpanded": {
       const has = state.expanded.includes(action.path);
       if (has === action.expanded) return state;
@@ -270,6 +276,7 @@ export function useWorkspaceActions() {
     addFolders: (paths: string[]) => dispatch({ type: "addFolders", paths }),
     removeFolder: (path: string) => dispatch({ type: "removeFolder", path }),
     setExpanded: (path: string, expanded: boolean) => dispatch({ type: "setExpanded", path, expanded }),
+    expandMany: (paths: string[]) => dispatch({ type: "expandMany", paths }),
     setSidebar: (patch: Partial<WorkspaceState["sidebar"]>) => dispatch({ type: "sidebar", patch }),
     pruneDb: (existingIds: number[]) => dispatch({ type: "pruneDb", existingIds }),
     setEditorMode: (mode: EditorMode) => dispatch({ type: "editorMode", mode }),

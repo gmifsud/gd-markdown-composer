@@ -12,6 +12,9 @@ files:
   - electron/main.cjs
   - electron/preload.cjs
   - electron/icons/icon-256.png
+  # The server (dist/index.js) and the page are fully bundled, so the app needs
+  # no node_modules at runtime; leaving them out keeps the install small.
+  - "!node_modules/**/*"
   - package.json
 
 asar: true
