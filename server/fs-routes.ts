@@ -1,13 +1,13 @@
 import type { Express, NextFunction, Request, Response } from "express";
-import { promises as fsp } from "fs";
+import { constants as fsConstants, promises as fsp } from "fs";
 import { randomBytes } from "crypto";
 import os from "os";
 import path from "path";
 import { readWorkbook } from "./office";
 import {
   FS_CLIENT_HEADER, IMAGE_TYPES, extensionOf,
-  type FsCreateRequest, type FsEntry, type FsListResponse, type FsReadResponse,
-  type FsSearchRequest, type FsSearchResponse, type FsSearchResult,
+  type FsCreateRequest, type FsEntry, type FsListResponse, type FsMoveRequest, type FsMoveResponse,
+  type FsReadResponse, type FsSearchRequest, type FsSearchResponse, type FsSearchResult,
   type FsStatus, type FsWriteRequest, type FsWriteResponse,
 } from "@shared/fs";
 
@@ -15,6 +15,7 @@ const MAX_READ_BYTES = 20 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 const HIDDEN_ENTRIES = new Set([".git", ".DS_Store", "Thumbs.db"]);
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const CASE_INSENSITIVE_FS = process.platform === "win32" || process.platform === "darwin";
 
 // Image URLs (used by <img>, which can't send headers) carry this token instead.
 const IMAGE_TOKEN = randomBytes(24).toString("hex");
@@ -79,6 +80,7 @@ function fsError(err: unknown): HttpError {
   const code = (err as NodeJS.ErrnoException)?.code;
   if (code === "ENOENT") return new HttpError(404, "Not found");
   if (code === "EACCES" || code === "EPERM") return new HttpError(403, "Permission denied");
+  if (code === "EBUSY") return new HttpError(423, "The file is in use by another program");
   if (code === "ENOTDIR") return new HttpError(400, "Not a folder");
   if (code === "EISDIR") return new HttpError(400, "Not a file");
   return new HttpError(500, (err as Error)?.message ?? "File system error");
@@ -111,6 +113,30 @@ async function atomicWrite(filePath: string, content: string) {
       return;
     }
     throw err;
+  }
+}
+
+/** Same path, allowing for case-insensitive file systems (Windows, macOS). */
+function samePath(a: string, b: string) {
+  return CASE_INSENSITIVE_FS ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** Renames `from` to `to`; across drives (where rename can't work) it copies, then deletes the original. */
+async function moveFile(from: string, to: string) {
+  try {
+    await fsp.rename(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    const { atime, mtime } = await fsp.stat(from);
+    // COPYFILE_EXCL: never overwrite a file that appeared since the name was checked.
+    await fsp.copyFile(from, to, fsConstants.COPYFILE_EXCL);
+    try {
+      await fsp.utimes(to, atime, mtime);
+      await fsp.unlink(from);
+    } catch (cleanupErr) {
+      await fsp.rm(to, { force: true });
+      throw cleanupErr;
+    }
   }
 }
 
@@ -284,7 +310,7 @@ export function registerFsRoutes(app: Express) {
       enabled: isFsAccessEnabled(),
       home: os.homedir(),
       sep: path.sep as FsStatus["sep"],
-      caseInsensitive: process.platform === "win32" || process.platform === "darwin",
+      caseInsensitive: CASE_INSENSITIVE_FS,
       imageToken: isFsAccessEnabled() && isLocalRequest(_req) ? IMAGE_TOKEN : "",
     };
     res.json(status);
@@ -331,14 +357,21 @@ export function registerFsRoutes(app: Express) {
 
   app.get("/api/fs/list", handle(async (req, res) => {
     const dir = absolutePath(req.query.path);
+    // The folder picker only needs folders; skipping files saves a stat per file in big folders.
+    const foldersOnly = req.query.folders === "1";
     const dirents = await fsp.readdir(dir, { withFileTypes: true });
     const listed = await Promise.all(dirents.map(async (d): Promise<FsEntry | null> => {
       if (HIDDEN_ENTRIES.has(d.name)) return null;
       if (!d.isDirectory() && !d.isFile() && !d.isSymbolicLink()) return null; // sockets, devices, etc.
       const full = path.join(dir, d.name);
+      if (foldersOnly) {
+        if (d.isDirectory()) return { name: d.name, path: full, kind: "directory", mtimeMs: 0 };
+        if (d.isFile()) return null;
+      }
       // stat follows symlinks, so a link to a folder lists as a folder.
       const stat = await fsp.stat(full).catch(() => null);
       const isDir = stat ? stat.isDirectory() : d.isDirectory();
+      if (foldersOnly && !isDir) return null;
       return { name: d.name, path: full, kind: isDir ? "directory" : "file", mtimeMs: stat?.mtimeMs ?? 0 };
     }));
     const entries = listed.filter((e): e is FsEntry => e !== null);
@@ -433,5 +466,27 @@ export function registerFsRoutes(app: Express) {
     const stat = await fsp.stat(filePath);
     const body: FsWriteResponse = { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs };
     res.status(201).json(body);
+  }));
+
+  // Moves a file into another folder, keeping its name. Never overwrites: a name clash is a 409.
+  app.post("/api/fs/move", handle(async (req, res) => {
+    const from = absolutePath((req.body as Partial<FsMoveRequest>)?.from);
+    const toDirectory = absolutePath((req.body as Partial<FsMoveRequest>)?.toDirectory);
+
+    if (!(await fsp.stat(from)).isFile()) throw new HttpError(400, "Only files can be moved");
+    if (!(await fsp.stat(toDirectory)).isDirectory()) throw new HttpError(400, "Choose a folder to move the file into");
+
+    const name = path.basename(from);
+    const target = path.join(toDirectory, name);
+    if (samePath(target, from)) throw new HttpError(400, "The file is already in that folder");
+    if (await fsp.lstat(target).then(() => true, () => false)) {
+      throw new HttpError(409, `"${name}" already exists in that folder`);
+    }
+
+    await moveFile(from, target);
+    // Image lookups by name (Obsidian-style) are cached per folder; a moved image changes them.
+    if (extensionOf(name) in IMAGE_TYPES) nameIndexes.clear();
+    const body: FsMoveResponse = { from, path: target };
+    res.json(body);
   }));
 }

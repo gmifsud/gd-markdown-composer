@@ -11,3 +11,8 @@ export function markUnlocked(path: string) {
 export function isUnlocked(path: string) {
   return unlocked.has(path);
 }
+
+/** A moved file keeps its unlocked state at the new path. */
+export function moveUnlocked(from: string, to: string) {
+  if (unlocked.delete(from)) unlocked.add(to);
+}

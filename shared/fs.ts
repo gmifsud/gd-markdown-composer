@@ -28,11 +28,13 @@ export function isImagePath(filePath: string) {
 }
 
 /** How a file opens in the editor, decided by its extension. */
-export type FileKind = "md" | "json" | "yaml" | "drawio" | "image" | "docx" | "xlsx" | "text";
+export type FileKind = "md" | "html" | "json" | "yaml" | "drawio" | "image" | "docx" | "xlsx" | "text";
 
 const KIND_BY_EXTENSION: Record<string, FileKind> = {
   ".md": "md",
   ".markdown": "md",
+  ".html": "html",
+  ".htm": "html",
   ".json": "json",
   ".yaml": "yaml",
   ".yml": "yaml",
@@ -50,9 +52,9 @@ export function fileKindOf(filePath: string): FileKind {
   return KIND_BY_EXTENSION[ext] ?? "text";
 }
 
-/** Markdown, JSON and YAML open ready to edit; other files open read-only until unlocked. */
+/** Markdown, HTML, JSON and YAML open ready to edit; other files open read-only until unlocked. */
 export function opensEditable(kind: FileKind) {
-  return kind === "md" || kind === "json" || kind === "yaml";
+  return kind === "md" || kind === "html" || kind === "json" || kind === "yaml";
 }
 
 export interface FsStatus {
@@ -110,6 +112,20 @@ export interface FsCreateRequest {
   /** File name including its extension. */
   name: string;
   content?: string;
+}
+
+export interface FsMoveRequest {
+  /** File to move (absolute path). */
+  from: string;
+  /** Folder to move it into (absolute path). */
+  toDirectory: string;
+}
+
+export interface FsMoveResponse {
+  /** Where the file was. */
+  from: string;
+  /** Where it is now. */
+  path: string;
 }
 
 export interface FsSearchRequest {

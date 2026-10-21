@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useReducer, type ReactNode,
+  createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode,
 } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 
@@ -116,6 +116,7 @@ function loadState(): WorkspaceState {
 type Action =
   | { type: "open"; uri: string; after: string | null }
   | { type: "close"; uris: string[] }
+  | { type: "retarget"; from: string; to: string }
   | { type: "togglePin"; uri: string }
   | { type: "addFolders"; paths: string[] }
   | { type: "removeFolder"; path: string }
@@ -149,6 +150,17 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         openTabs: state.openTabs.filter(u => !closing.has(u)),
         pinned: state.pinned.filter(u => !closing.has(u)),
       };
+    }
+    case "retarget": {
+      // A moved file keeps its tab position and pin; if the target is already open, the tabs merge.
+      const swap = (list: string[]) => {
+        if (!list.includes(action.from)) return list;
+        const mapped = list.map(u => (u === action.from ? action.to : u));
+        return mapped.filter((u, i) => mapped.indexOf(u) === i);
+      };
+      const openTabs = swap(state.openTabs);
+      const pinned = swap(state.pinned);
+      return openTabs === state.openTabs && pinned === state.pinned ? state : { ...state, openTabs, pinned };
     }
     case "togglePin": {
       const pinned = state.pinned.includes(action.uri)
@@ -269,9 +281,20 @@ export function useWorkspaceActions() {
     dispatch({ type: "close", uris });
   }, [activeUri, dispatch, setLocation, state]);
 
+  // Moves finish asynchronously, so check the tab that is active now rather than when the move began.
+  const activeRef = useRef(activeUri);
+  activeRef.current = activeUri;
+
+  /** A file moved on disk: its tab (and pin) follow it, and the editor reopens it at the new path. */
+  const retarget = useCallback((from: string, to: string) => {
+    dispatch({ type: "retarget", from, to });
+    if (activeRef.current === from) setLocation(hrefFor(to), { replace: true });
+  }, [dispatch, setLocation]);
+
   return {
     open,
     close,
+    retarget,
     togglePin: (uri: string) => dispatch({ type: "togglePin", uri }),
     addFolders: (paths: string[]) => dispatch({ type: "addFolders", paths }),
     removeFolder: (path: string) => dispatch({ type: "removeFolder", path }),

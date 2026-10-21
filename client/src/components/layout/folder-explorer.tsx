@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import {
   ChevronDown, ChevronRight, File, FileJson, FileText, Code2, Folder, FolderOpen, FolderPlus,
   Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock, Image as ImageIcon, LocateFixed,
-  FileType, FileSpreadsheet,
+  FileType, FileSpreadsheet, Globe,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
@@ -17,6 +17,8 @@ import { useFolderDialogs } from "@/components/layout/folder-dialogs";
 import { PathMenuItems, useIsInside, useTabsInFolder } from "@/components/layout/path-actions";
 import { ExplorerSearchBox, FilteredTree, useExplorerSearch } from "@/components/layout/explorer-search";
 import { setRevealTarget, useRevealInExplorer, useRevealTarget } from "@/components/layout/explorer-reveal";
+import { useExplorerDragDrop } from "@/components/layout/explorer-dnd";
+import { MoveMenuItem } from "@/components/layout/move-file-context";
 import { useDebounce } from "@/hooks/use-debounce";
 import { baseName, fsApi, fsKeys, useFsStatus } from "@/lib/fs-api";
 import { fileUri, folderColour, useWorkspace, useWorkspaceActions, type ExplorerSort } from "@/lib/workspace";
@@ -29,6 +31,7 @@ function fileIcon(name: string) {
   if (type === "json") return <FileJson className="w-3.5 h-3.5 shrink-0 text-blue-400" />;
   if (type === "yaml") return <Code2 className="w-3.5 h-3.5 shrink-0 text-purple-400" />;
   if (type === "md") return <FileText className="w-3.5 h-3.5 shrink-0 text-gray-300" />;
+  if (type === "html") return <Globe className="w-3.5 h-3.5 shrink-0 text-rose-400" />;
   if (type === "drawio") return <Workflow className="w-3.5 h-3.5 shrink-0 text-orange-400" />;
   if (type === "image") return <ImageIcon className="w-3.5 h-3.5 shrink-0 text-emerald-400" />;
   if (type === "docx") return <FileType className="w-3.5 h-3.5 shrink-0 text-blue-400" />;
@@ -54,8 +57,11 @@ export function FolderExplorer() {
 
   const refreshAll = () => {
     queryClient.invalidateQueries({ queryKey: ["fs-list"] });
+    queryClient.invalidateQueries({ queryKey: ["fs-folders"] });
     queryClient.invalidateQueries({ queryKey: ["fs-search"] });
   };
+
+  const dragDrop = useExplorerDragDrop();
 
   // Search: names always, contents when toggled on. Contents need 2+ characters.
   const search = useExplorerSearch();
@@ -122,7 +128,12 @@ export function FolderExplorer() {
 
       {status?.enabled && state.folders.length > 0 && <ExplorerSearchBox summary={summary} />}
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden text-[13px] scroll-dark" role="tree" aria-label="Folders">
+      <div
+        className="flex-1 overflow-y-auto overflow-x-hidden text-[13px] scroll-dark"
+        role="tree"
+        aria-label="Folders"
+        {...dragDrop}
+      >
         {statusLoading ? null : !status?.enabled ? (
           <p className="px-4 py-3 text-[12px] text-[#858585]">
             Opening folders is available in the desktop app and when running locally.
@@ -178,6 +189,7 @@ function FolderRoot({ folder, index, filtered }: {
           <div
             role="treeitem"
             aria-expanded={expanded}
+            data-drop-dir={folder}
             tabIndex={0}
             className="group flex items-center gap-1 pl-1 pr-1 h-[22px] cursor-pointer hover:bg-[#2a2d2e] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#007fd4]"
             onClick={() => setExpanded(folder, !expanded)}
@@ -302,7 +314,7 @@ function DirectoryChildren({ dir, root, depth }: { dir: string; root: string; de
     return <div className="h-[22px] text-[#858585] text-[12px] italic" style={pad}>Empty folder</div>;
   }
   return (
-    <div role="group">
+    <div role="group" data-drop-dir={dir}>
       {entries.map(entry => <EntryRow key={entry.path} entry={entry} root={root} depth={depth} />)}
     </div>
   );
@@ -341,6 +353,9 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
             aria-expanded={isDir ? expanded : undefined}
             aria-selected={isActive}
             data-path={entry.path}
+            data-drop-dir={isDir ? entry.path : undefined}
+            data-drag-path={isDir ? undefined : entry.path}
+            draggable={!isDir}
             tabIndex={0}
             className={`flex items-center gap-1.5 pr-2 h-[22px] cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#007fd4] ${
               isActive ? "bg-[#37373d] text-white" : "hover:bg-[#2a2d2e] text-[#cccccc]"
@@ -384,9 +399,12 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
               <FilePlus className="w-3.5 h-3.5 mr-2" /> New File…
             </ContextMenuItem>
           ) : (
-            <ContextMenuItem onSelect={() => open(fileUri(entry.path))}>
-              {fileIcon(entry.name)} <span className="ml-2">Open</span>
-            </ContextMenuItem>
+            <>
+              <ContextMenuItem onSelect={() => open(fileUri(entry.path))}>
+                {fileIcon(entry.name)} <span className="ml-2">Open</span>
+              </ContextMenuItem>
+              <MoveMenuItem path={entry.path} />
+            </>
           )}
           <ContextMenuSeparator />
           <PathMenuItems path={entry.path} root={root} isDirectory={isDir} />

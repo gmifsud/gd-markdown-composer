@@ -34,7 +34,7 @@ export interface EditorSource {
   /** Database documents can be renamed from the header; files can't (yet). */
   titleEditable: boolean;
   /** "drawio" renders the diagram; "text" is any other text file, shown without a preview. */
-  fileType: "md" | "json" | "yaml" | "drawio" | "text";
+  fileType: "md" | "json" | "yaml" | "drawio" | "html" | "text";
   /** Open read-only with an Edit button (other text files and diagrams). */
   startLocked?: boolean;
   /** Called when the user unlocks a locked source for editing. */
@@ -88,9 +88,22 @@ const DOWNLOAD_TYPES = {
   md: { ext: ".md", mime: "text/markdown" },
   json: { ext: ".json", mime: "application/json" },
   yaml: { ext: ".yaml", mime: "application/yaml" },
+  html: { ext: ".html", mime: "text/html" },
 } as const;
 
 const noopSave: Saver = async () => {};
+const HTML_PREVIEW_POLICY =
+  "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: https:; style-src 'unsafe-inline' https:; font-src data: https:; media-src data: https:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'\">";
+
+function htmlPreviewDocument(html: string) {
+  if (/<head(?:\s[^>]*)?>/i.test(html)) {
+    return html.replace(/<head(?:\s[^>]*)?>/i, match => `${match}${HTML_PREVIEW_POLICY}`);
+  }
+  if (/<!doctype[^>]*>/i.test(html)) {
+    return html.replace(/<!doctype[^>]*>/i, match => `${match}${HTML_PREVIEW_POLICY}`);
+  }
+  return `${HTML_PREVIEW_POLICY}${html}`;
+}
 
 /**
  * Which occurrence (0-based) the match at `offset` is, counting from the start
@@ -145,6 +158,7 @@ export function Editor({ source }: EditorProps) {
   const { state: workspace } = useWorkspace();
   const { setEditorMode, setDiagramMode, setPreviewFullWidth, setCompact, setFrontMatterOpen } = useWorkspaceActions();
   const isDrawio = source.fileType === "drawio";
+  const isHtml = source.fileType === "html";
   const mode = isDrawio ? workspace.diagramMode : workspace.editorMode;
   const setMode = isDrawio ? setDiagramMode : setEditorMode;
   const fullWidth = workspace.previewFullWidth;
@@ -388,7 +402,7 @@ export function Editor({ source }: EditorProps) {
   const sourcePane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0" data-testid="source-pane">
       <div className={paneLabelClass}>
-        <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : "Markdown"}</span>
+        <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : isHtml ? "HTML" : "Markdown"}</span>
         {frontMatterToggle}
       </div>
       <SourceTextarea
@@ -410,9 +424,18 @@ export function Editor({ source }: EditorProps) {
   const previewPane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0 bg-[#fafafa]" data-testid="preview-pane">
       <div className={paneLabelClass}>
-        {isStructured ? "Formatted" : isDrawio ? "Diagram" : "Preview"}
+        {isStructured ? "Formatted" : isDrawio ? "Diagram" : isHtml ? "HTML" : "Preview"}
       </div>
-      {isDrawio ? (
+      {isHtml ? (
+        <iframe
+          title={`${title} preview`}
+          srcDoc={htmlPreviewDocument(content)}
+          sandbox=""
+          referrerPolicy="no-referrer"
+          className="flex-1 min-h-0 w-full border-0 bg-white"
+          data-testid="html-preview"
+        />
+      ) : isDrawio ? (
         <div className="flex-1 min-h-0 p-3">
           <DrawioFileView xml={content} />
         </div>
@@ -604,7 +627,7 @@ export function Editor({ source }: EditorProps) {
               <div className="px-3 py-2 border-b border-gray-100 bg-[#fafafa] shrink-0">
                 <TabsList className="grid w-full grid-cols-2 bg-gray-200/50 p-1">
                   <TabsTrigger value="edit" className="text-xs rounded shadow-sm data-[state=active]:bg-white">Edit</TabsTrigger>
-                  <TabsTrigger value="preview" className="text-xs rounded shadow-sm data-[state=active]:bg-white">{isStructured ? "Formatted" : isDrawio ? "Diagram" : "Preview"}</TabsTrigger>
+                  <TabsTrigger value="preview" className="text-xs rounded shadow-sm data-[state=active]:bg-white">{isStructured ? "Formatted" : isDrawio ? "Diagram" : isHtml ? "HTML" : "Preview"}</TabsTrigger>
                 </TabsList>
               </div>
               <TabsContent value="edit" className="flex-1 p-0 m-0 data-[state=active]:flex flex-col min-h-0">
@@ -620,7 +643,16 @@ export function Editor({ source }: EditorProps) {
                 />
               </TabsContent>
               <TabsContent ref={previewScrollRef} value="preview" className="flex-1 overflow-y-auto p-5 m-0 data-[state=active]:block min-h-0 bg-[#fafafa]">
-                {isDrawio ? <DrawioFileView xml={content} /> : isStructured ? structuredPreview : (
+                {isHtml ? (
+                  <iframe
+                    title={`${title} preview`}
+                    srcDoc={htmlPreviewDocument(content)}
+                    sandbox=""
+                    referrerPolicy="no-referrer"
+                    className="h-full min-h-0 w-full border-0 bg-white"
+                    data-testid="html-preview"
+                  />
+                ) : isDrawio ? <DrawioFileView xml={content} /> : isStructured ? structuredPreview : (
                   <MarkdownPreview
                     content={content}
                     docPath={source.path}

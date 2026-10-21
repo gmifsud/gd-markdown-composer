@@ -9,7 +9,7 @@ import { useSyncExternalStore } from "react";
 export interface ActiveEditorInfo {
   /** Tab URI (db:<id> or file:<path>). */
   uri: string;
-  fileType: "md" | "json" | "yaml" | "drawio" | "text";
+  fileType: "md" | "json" | "yaml" | "drawio" | "html" | "text";
   title: string;
   content: string;
 }

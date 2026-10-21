@@ -5,12 +5,13 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { useLocation } from "wouter";
-import { ChevronDown, ChevronRight, ImageOff } from "lucide-react";
+import { ChevronDown, ChevronRight, ImageOff, TextSelect } from "lucide-react";
 import { DiagramBlock, DIAGRAM_LANGUAGES } from "@/components/editor/diagrams";
 import { Expandable } from "@/components/editor/lightbox";
 import { useFsStatus } from "@/lib/fs-api";
 import { rewriteWikiEmbeds, splitFrontMatter, WIDTH_TITLE_PREFIX } from "@/lib/markdown-source";
 import { useWorkspace, useWorkspaceActions } from "@/lib/workspace";
+import rehypeHighlight from "rehype-highlight";
 
 // Ids from the document (headings, footnotes, raw HTML) get a prefix, as on
 // GitHub, so they can't collide with ids the app uses. `#section` links map to it.
@@ -33,6 +34,7 @@ const remarkPlugins = [remarkGfm];
 const rehypePlugins: NonNullable<ComponentPropsWithoutRef<typeof ReactMarkdown>["rehypePlugins"]> = [
   rehypeRaw,
   [rehypeSanitize, sanitizeSchema],
+  [rehypeHighlight, { ignoreMissing: true }],
   // After sanitising, so heading ids get the prefix exactly once.
   [rehypeSlug, { prefix: ID_PREFIX }],
 ];
@@ -110,16 +112,46 @@ interface HastNode {
 /** ```mermaid, ```plantuml/```puml and ```drawio blocks render as diagrams; other code stays code. */
 function PreviewPre({ node, children, ...rest }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
   const code = (node as HastNode | undefined)?.children?.[0];
+  let language: string | undefined;
   if (code?.type === "element" && code.tagName === "code") {
     const classes = Array.isArray(code.properties?.className) ? (code.properties.className as string[]) : [];
-    const lang = classes.find(c => c.startsWith("language-"))?.slice("language-".length).toLowerCase();
-    const kind = lang ? DIAGRAM_LANGUAGES[lang as keyof typeof DIAGRAM_LANGUAGES] : undefined;
+    language = classes.find(c => c.startsWith("language-"))?.slice("language-".length).toLowerCase();
+    const kind = language ? DIAGRAM_LANGUAGES[language as keyof typeof DIAGRAM_LANGUAGES] : undefined;
     if (kind) {
       const text = (code.children ?? []).map(c => c.value ?? "").join("").replace(/\n$/, "");
       return <DiagramBlock kind={kind} code={text} />;
     }
   }
-  return <pre {...rest}>{children}</pre>;
+  return (
+    <div className="mdc-code-block not-prose my-4 overflow-hidden rounded-lg border border-slate-700 bg-[#0b1220] text-gray-100" data-code-block>
+      <div className="flex h-8 items-center justify-between border-b border-slate-700 bg-slate-800/70 px-3 text-[11px] text-slate-300">
+        <span className="font-mono uppercase tracking-wide" data-code-language>{language || "text"}</span>
+        <button
+          type="button"
+          className="flex h-6 items-center gap-1 rounded px-1.5 text-slate-300 hover:bg-slate-700 hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-400"
+          title="Select all code"
+          aria-label="Select all code"
+          onClick={event => {
+            const codeElement = event.currentTarget.closest("[data-code-block]")?.querySelector("code");
+            if (!codeElement) return;
+            const selection = window.getSelection();
+            if (!selection) return;
+            const range = window.document.createRange();
+            range.selectNodeContents(codeElement);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }}
+          data-testid="select-code"
+        >
+          <TextSelect className="h-3.5 w-3.5" />
+          <span>Select all</span>
+        </button>
+      </div>
+      <pre {...rest} className="!m-0 !overflow-x-auto !rounded-none !bg-transparent !p-4">
+        {children}
+      </pre>
+    </div>
+  );
 }
 
 /** Local images load through the app's server, which finds them on disk. */

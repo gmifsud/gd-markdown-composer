@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
-  Code2, File, FileJson, FileSpreadsheet, FileText, FileType, Image as ImageIcon, LocateFixed, Pin, PinOff, Trash2,
+  Code2, File, FileJson, FileSpreadsheet, FileText, FileType, Globe, Image as ImageIcon, LocateFixed, Pin, PinOff, Trash2,
   Workflow, X, XSquare,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { PathMenuItems, useRootFolderOf, useTabsInFolder } from "@/components/layout/path-actions";
+import { MoveMenuItem } from "@/components/layout/move-file-context";
 import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { useDeleteDocument, useDocuments } from "@/hooks/use-documents";
 import { baseName } from "@/lib/fs-api";
@@ -33,6 +34,7 @@ function TabIcon({ type }: { type: TabInfo["type"] }) {
   if (type === "json") return <FileJson className={`${cls} text-blue-500`} />;
   if (type === "yaml") return <Code2 className={`${cls} text-purple-500`} />;
   if (type === "md") return <FileText className={`${cls} text-gray-400`} />;
+  if (type === "html") return <Globe className={`${cls} text-rose-500`} />;
   if (type === "drawio") return <Workflow className={`${cls} text-orange-500`} />;
   if (type === "image") return <ImageIcon className={`${cls} text-emerald-500`} />;
   if (type === "docx") return <FileType className={`${cls} text-blue-600`} />;
@@ -196,6 +198,7 @@ export function TabBar() {
               ? <><PinOff className="w-3.5 h-3.5 mr-2" /> Unpin</>
               : <><Pin className="w-3.5 h-3.5 mr-2" /> Pin</>}
           </ContextMenuItem>
+          {tab.path && <MoveMenuItem path={tab.path} />}
           {tab.path && (
             <>
               <ContextMenuSeparator />
