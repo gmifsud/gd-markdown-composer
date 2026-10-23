@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useReducer, type ReactNode,
+  createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode,
 } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 
@@ -62,7 +62,12 @@ export interface WorkspaceState {
   editorMode: EditorMode;
   /** Layout for .drawio files, remembered separately (they usually want the diagram only). */
   diagramMode: EditorMode;
-  explorer: { sort: ExplorerSort; showDates: boolean };
+  /** autoReveal: the explorer follows the active tab (unfolds to and highlights its file). */
+  explorer: { sort: ExplorerSort; showDates: boolean; autoReveal: boolean };
+  /** Front matter shown expanded (in the preview) and visible in the source. */
+  frontMatterOpen: boolean;
+  /** Tighter line spacing and margins in the preview and source. */
+  compact: boolean;
   /** Let rendered markdown use the whole pane instead of a readable ~80-character column. */
   previewFullWidth: boolean;
 }
@@ -81,8 +86,10 @@ const initialState: WorkspaceState = {
   sidebar: { visible: true, width: SIDEBAR_DEFAULT_WIDTH, panel: "explorer" },
   editorMode: "split",
   diagramMode: "preview",
-  explorer: { sort: "name", showDates: true },
+  explorer: { sort: "name", showDates: true, autoReveal: false },
   previewFullWidth: false,
+  frontMatterOpen: false,
+  compact: false,
 };
 
 function loadState(): WorkspaceState {
@@ -109,16 +116,20 @@ function loadState(): WorkspaceState {
 type Action =
   | { type: "open"; uri: string; after: string | null }
   | { type: "close"; uris: string[] }
+  | { type: "retarget"; from: string; to: string }
   | { type: "togglePin"; uri: string }
   | { type: "addFolders"; paths: string[] }
   | { type: "removeFolder"; path: string }
   | { type: "setExpanded"; path: string; expanded: boolean }
+  | { type: "expandMany"; paths: string[] }
   | { type: "sidebar"; patch: Partial<WorkspaceState["sidebar"]> }
   | { type: "pruneDb"; existingIds: number[] }
   | { type: "editorMode"; mode: EditorMode }
   | { type: "previewFullWidth"; value: boolean }
   | { type: "diagramMode"; mode: EditorMode }
-  | { type: "explorer"; patch: Partial<WorkspaceState["explorer"]> };
+  | { type: "explorer"; patch: Partial<WorkspaceState["explorer"]> }
+  | { type: "frontMatterOpen"; value: boolean }
+  | { type: "compact"; value: boolean };
 
 const clampWidth = (w: number) => Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w)));
 
@@ -140,6 +151,17 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         pinned: state.pinned.filter(u => !closing.has(u)),
       };
     }
+    case "retarget": {
+      // A moved file keeps its tab position and pin; if the target is already open, the tabs merge.
+      const swap = (list: string[]) => {
+        if (!list.includes(action.from)) return list;
+        const mapped = list.map(u => (u === action.from ? action.to : u));
+        return mapped.filter((u, i) => mapped.indexOf(u) === i);
+      };
+      const openTabs = swap(state.openTabs);
+      const pinned = swap(state.pinned);
+      return openTabs === state.openTabs && pinned === state.pinned ? state : { ...state, openTabs, pinned };
+    }
     case "togglePin": {
       const pinned = state.pinned.includes(action.uri)
         ? state.pinned.filter(u => u !== action.uri)
@@ -154,6 +176,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     }
     case "removeFolder":
       return { ...state, folders: state.folders.filter(f => f !== action.path) };
+    case "expandMany": {
+      const missing = action.paths.filter(p => !state.expanded.includes(p));
+      return missing.length ? { ...state, expanded: [...state.expanded, ...missing] } : state;
+    }
     case "setExpanded": {
       const has = state.expanded.includes(action.path);
       if (has === action.expanded) return state;
@@ -167,6 +193,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       sidebar.width = clampWidth(sidebar.width);
       return { ...state, sidebar };
     }
+    case "frontMatterOpen":
+      return { ...state, frontMatterOpen: action.value };
+    case "compact":
+      return { ...state, compact: action.value };
     case "explorer":
       return { ...state, explorer: { ...state.explorer, ...action.patch } };
     case "diagramMode":
@@ -251,19 +281,33 @@ export function useWorkspaceActions() {
     dispatch({ type: "close", uris });
   }, [activeUri, dispatch, setLocation, state]);
 
+  // Moves finish asynchronously, so check the tab that is active now rather than when the move began.
+  const activeRef = useRef(activeUri);
+  activeRef.current = activeUri;
+
+  /** A file moved on disk: its tab (and pin) follow it, and the editor reopens it at the new path. */
+  const retarget = useCallback((from: string, to: string) => {
+    dispatch({ type: "retarget", from, to });
+    if (activeRef.current === from) setLocation(hrefFor(to), { replace: true });
+  }, [dispatch, setLocation]);
+
   return {
     open,
     close,
+    retarget,
     togglePin: (uri: string) => dispatch({ type: "togglePin", uri }),
     addFolders: (paths: string[]) => dispatch({ type: "addFolders", paths }),
     removeFolder: (path: string) => dispatch({ type: "removeFolder", path }),
     setExpanded: (path: string, expanded: boolean) => dispatch({ type: "setExpanded", path, expanded }),
+    expandMany: (paths: string[]) => dispatch({ type: "expandMany", paths }),
     setSidebar: (patch: Partial<WorkspaceState["sidebar"]>) => dispatch({ type: "sidebar", patch }),
     pruneDb: (existingIds: number[]) => dispatch({ type: "pruneDb", existingIds }),
     setEditorMode: (mode: EditorMode) => dispatch({ type: "editorMode", mode }),
     setPreviewFullWidth: (value: boolean) => dispatch({ type: "previewFullWidth", value }),
     setDiagramMode: (mode: EditorMode) => dispatch({ type: "diagramMode", mode }),
     setExplorer: (patch: Partial<WorkspaceState["explorer"]>) => dispatch({ type: "explorer", patch }),
+    setFrontMatterOpen: (value: boolean) => dispatch({ type: "frontMatterOpen", value }),
+    setCompact: (value: boolean) => dispatch({ type: "compact", value }),
   };
 }
 

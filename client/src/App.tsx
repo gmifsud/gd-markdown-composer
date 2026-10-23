@@ -8,6 +8,7 @@ import Home from "@/pages/home";
 import { installPendingSaveHooks } from "@/lib/pending-saves";
 import { WorkspaceProvider } from "@/lib/workspace";
 import { FolderDialogsProvider } from "@/components/layout/folder-dialogs";
+import { MoveFileProvider } from "@/components/layout/move-file";
 
 installPendingSaveHooks();
 
@@ -29,7 +30,9 @@ function App() {
         <Toaster />
         <WorkspaceProvider>
           <FolderDialogsProvider>
-            <Router />
+            <MoveFileProvider>
+              <Router />
+            </MoveFileProvider>
           </FolderDialogsProvider>
         </WorkspaceProvider>
       </TooltipProvider>

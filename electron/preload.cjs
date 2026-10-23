@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld('mdcDesktop', {
   pickFolders: () => ipcRenderer.invoke('mdc:pick-folders'),
   /** Shows a file or folder in the system file manager. */
   revealPath: (targetPath) => ipcRenderer.invoke('mdc:reveal-path', targetPath),
+  /** Opens a document in its default app (Word, Excel…). */
+  openPath: (targetPath) => ipcRenderer.invoke('mdc:open-path', targetPath),
 });

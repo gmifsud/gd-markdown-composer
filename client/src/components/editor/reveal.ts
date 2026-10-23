@@ -23,7 +23,7 @@ const MIRRORED_STYLES = [
 ] as const;
 
 /** Pixel offset of character `offset` inside a textarea, accounting for soft wrapping. */
-function caretTop(ta: HTMLTextAreaElement, offset: number) {
+export function caretTop(ta: HTMLTextAreaElement, offset: number) {
   const style = getComputedStyle(ta);
   const mirror = document.createElement("div");
   for (const prop of MIRRORED_STYLES) mirror.style[prop] = style[prop];
@@ -85,7 +85,10 @@ export function revealHeadingInPreview(container: HTMLElement, text: string, occ
  */
 export function revealTextInPreview(container: HTMLElement, query: string, occurrence: number, select: boolean) {
   const needle = query.toLowerCase();
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  // The Properties card shows front matter, which isn't part of the counted body text.
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest("[data-front-matter]") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
   let seen = 0;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = (node.nodeValue ?? "").toLowerCase();

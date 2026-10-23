@@ -372,6 +372,15 @@ ipcMain.handle('mdc:pick-folders', async (event) => {
   return result.canceled ? [] : result.filePaths;
 });
 
+// Only documents: opening an arbitrary path could run a program.
+const OPENABLE_EXTENSIONS = new Set(['.docx', '.doc', '.xlsx', '.xlsm', '.xls', '.pptx', '.pdf', '.csv']);
+
+ipcMain.handle('mdc:open-path', async (_event, targetPath) => {
+  if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath)) return 'Invalid path';
+  if (!OPENABLE_EXTENSIONS.has(path.extname(targetPath).toLowerCase())) return 'Not an openable document';
+  return shell.openPath(targetPath);
+});
+
 ipcMain.handle('mdc:reveal-path', (_event, targetPath) => {
   if (typeof targetPath === 'string' && path.isAbsolute(targetPath)) {
     shell.showItemInFolder(targetPath);
