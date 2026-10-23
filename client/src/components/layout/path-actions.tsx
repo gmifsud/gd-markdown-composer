@@ -3,7 +3,7 @@ import { Copy, FolderSearch, XSquare } from "lucide-react";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import { useToast } from "@/hooks/use-toast";
 import { copyText, desktop, isInside, relativePath, useFsStatus } from "@/lib/fs-api";
-import { parseUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
+import { groupOf, parseUri, useWorkspace, useWorkspaceActions, type FolderGroup } from "@/lib/workspace";
 
 /** Path comparisons follow the server OS (case-insensitive on Windows/macOS). */
 export function useIsInside() {
@@ -33,6 +33,17 @@ export function useRootFolderOf() {
     });
     return best;
   }, [state.folders, inside]);
+}
+
+/** The explorer group a path belongs to (see groupOf), or null. */
+export function useGroupOf() {
+  const { state } = useWorkspace();
+  const { data: status } = useFsStatus();
+  const caseInsensitive = status?.caseInsensitive ?? true;
+  return useCallback(
+    (path: string): FolderGroup | null => groupOf(state.groups, path, caseInsensitive),
+    [state.groups, caseInsensitive],
+  );
 }
 
 export function useCopyPath() {
