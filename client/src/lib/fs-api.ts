@@ -72,6 +72,10 @@ interface DesktopBridge {
   revealPath(path: string): Promise<void>;
   /** Opens a document in its default app (Word, Excel…). Missing in older builds. */
   openPath?(path: string): Promise<string>;
+  /** Files the OS asked the app to open (double-click, "Open with"); empties the queue. Missing in older builds. */
+  takePendingFiles?(): Promise<string[]>;
+  /** Called when more files are waiting to be taken; returns an unsubscribe function. Missing in older builds. */
+  onFilesPending?(callback: () => void): () => void;
 }
 
 declare global {

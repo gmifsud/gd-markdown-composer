@@ -28,7 +28,7 @@ export function isImagePath(filePath: string) {
 }
 
 /** How a file opens in the editor, decided by its extension. */
-export type FileKind = "md" | "html" | "json" | "yaml" | "drawio" | "image" | "docx" | "xlsx" | "text";
+export type FileKind = "md" | "html" | "json" | "yaml" | "drawio" | "mermaid" | "image" | "docx" | "xlsx" | "text";
 
 const KIND_BY_EXTENSION: Record<string, FileKind> = {
   ".md": "md",
@@ -43,6 +43,8 @@ const KIND_BY_EXTENSION: Record<string, FileKind> = {
   ".docx": "docx",
   ".xlsx": "xlsx",
   ".xlsm": "xlsx",
+  ".mermaid": "mermaid",
+  ".mmd": "mermaid",
 };
 
 export function fileKindOf(filePath: string): FileKind {
@@ -52,9 +54,9 @@ export function fileKindOf(filePath: string): FileKind {
   return KIND_BY_EXTENSION[ext] ?? "text";
 }
 
-/** Markdown, HTML, JSON and YAML open ready to edit; other files open read-only until unlocked. */
+/** Markdown, HTML, JSON, YAML and Mermaid open ready to edit; other files open read-only until unlocked. */
 export function opensEditable(kind: FileKind) {
-  return kind === "md" || kind === "html" || kind === "json" || kind === "yaml";
+  return kind === "md" || kind === "html" || kind === "json" || kind === "yaml" || kind === "mermaid";
 }
 
 export interface FsStatus {

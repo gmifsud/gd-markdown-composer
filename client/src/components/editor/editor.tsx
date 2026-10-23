@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useDeferredValue } from "react";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import { parseAllDocuments } from "yaml";
 import {
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
-import { DrawioFileView } from "@/components/editor/diagrams";
+import { DrawioFileView, MermaidFileView } from "@/components/editor/diagrams";
 import { SaveButton } from "@/components/editor/save-button";
 import {
   FindBar, SourceTextarea, clearPreviewPaint, findMatches, paintPreview, previewRanges,
@@ -22,6 +22,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { useWorkspace, useWorkspaceActions, type EditorMode } from "@/lib/workspace";
 import { clearActiveEditor, publishActiveEditor, registerRevealHandler } from "@/lib/active-editor";
+import type { FileKind } from "@shared/fs";
 import {
   caretTop, lineRange, occurrencesBefore, revealHeadingInPreview, revealInTextarea, revealTextInPreview,
 } from "@/components/editor/reveal";
@@ -33,8 +34,8 @@ export interface EditorSource {
   title: string;
   /** Database documents can be renamed from the header; files can't (yet). */
   titleEditable: boolean;
-  /** "drawio" renders the diagram; "text" is any other text file, shown without a preview. */
-  fileType: "md" | "json" | "yaml" | "drawio" | "html" | "text";
+  /** "drawio"/"mermaid" render the diagram, "html" a sandboxed page; "text" is any other text file, shown without a preview. */
+  fileType: FileKind;
   /** Open read-only with an Edit button (other text files and diagrams). */
   startLocked?: boolean;
   /** Called when the user unlocks a locked source for editing. */
@@ -159,8 +160,11 @@ export function Editor({ source }: EditorProps) {
   const { setEditorMode, setDiagramMode, setPreviewFullWidth, setCompact, setFrontMatterOpen } = useWorkspaceActions();
   const isDrawio = source.fileType === "drawio";
   const isHtml = source.fileType === "html";
-  const mode = isDrawio ? workspace.diagramMode : workspace.editorMode;
-  const setMode = isDrawio ? setDiagramMode : setEditorMode;
+  const isMermaid = source.fileType === "mermaid";
+  // Diagram files remember their own layout (they usually want the diagram only).
+  const isDiagramFile = isDrawio || isMermaid;
+  const mode = isDiagramFile ? workspace.diagramMode : workspace.editorMode;
+  const setMode = isDiagramFile ? setDiagramMode : setEditorMode;
   const fullWidth = workspace.previewFullWidth;
   const compact = workspace.compact;
   const rootFolderOf = useRootFolderOf();
@@ -325,18 +329,28 @@ export function Editor({ source }: EditorProps) {
     { enabled: !readOnly },
   );
 
+  // Previews, diagrams and validation render from a deferred copy of the text:
+  // React renders them at low priority, so typing in a large document never
+  // waits for a full Markdown parse (or JSON/YAML pass) per keystroke.
+  const deferredContent = useDeferredValue(content);
+
+  const analyze = (text: string) => (isJson ? analyzeJson(text) : isYaml ? analyzeYaml(text) : EMPTY_ANALYSIS);
   const analysis = useMemo(
-    () => (isJson ? analyzeJson(content) : isYaml ? analyzeYaml(content) : EMPTY_ANALYSIS),
-    [isJson, isYaml, content],
+    () => analyze(deferredContent),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isJson, isYaml, deferredContent],
   );
 
   const handleFormat = () => {
-    if (analysis.error) {
+    // Format the live text, not the deferred copy, so a keystroke made just
+    // before clicking is never lost.
+    const current = analyze(content);
+    if (current.error) {
       toast({ description: `Cannot format invalid ${formatLabel}`, variant: "destructive" });
       return;
     }
-    if (!analysis.formatted) return;
-    setContent(analysis.formatted);
+    if (!current.formatted) return;
+    setContent(current.formatted);
     toast({ description: `${formatLabel} formatted successfully` });
   };
 
@@ -402,7 +416,7 @@ export function Editor({ source }: EditorProps) {
   const sourcePane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0" data-testid="source-pane">
       <div className={paneLabelClass}>
-        <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : isHtml ? "HTML" : "Markdown"}</span>
+        <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : isMermaid ? "Mermaid" : isHtml ? "HTML" : "Markdown"}</span>
         {frontMatterToggle}
       </div>
       <SourceTextarea
@@ -424,26 +438,26 @@ export function Editor({ source }: EditorProps) {
   const previewPane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0 bg-[#fafafa]" data-testid="preview-pane">
       <div className={paneLabelClass}>
-        {isStructured ? "Formatted" : isDrawio ? "Diagram" : isHtml ? "HTML" : "Preview"}
+        {isStructured ? "Formatted" : isDiagramFile ? "Diagram" : isHtml ? "HTML" : "Preview"}
       </div>
       {isHtml ? (
         <iframe
           title={`${title} preview`}
-          srcDoc={htmlPreviewDocument(content)}
+          srcDoc={htmlPreviewDocument(deferredContent)}
           sandbox=""
           referrerPolicy="no-referrer"
           className="flex-1 min-h-0 w-full border-0 bg-white"
           data-testid="html-preview"
         />
-      ) : isDrawio ? (
+      ) : isDiagramFile ? (
         <div className="flex-1 min-h-0 p-3">
-          <DrawioFileView xml={content} />
+          {isDrawio ? <DrawioFileView xml={deferredContent} /> : <MermaidFileView code={deferredContent} />}
         </div>
       ) : (
         <div ref={previewScrollRef} className={`flex-1 overflow-y-auto ${compact ? "px-4 py-3 md:px-6" : "p-6 md:p-8"}`}>
           {isStructured ? structuredPreview : (
             <MarkdownPreview
-              content={content}
+              content={deferredContent}
               docPath={source.path}
               rootFolder={rootFolder}
               className={`prose prose-slate prose-headings:tracking-tight prose-a:text-blue-600 prose-pre:bg-gray-900 prose-pre:text-gray-100 ${
@@ -486,7 +500,7 @@ export function Editor({ source }: EditorProps) {
         )}
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {!isPlainText && !isMobile && <ModeSwitch mode={mode} onChange={setMode} />}
-          {!isPlainText && !isStructured && !isDrawio && !isMobile && mode !== "edit" && (
+          {!isPlainText && !isStructured && !isDiagramFile && !isMobile && mode !== "edit" && (
             <button
               className={`hidden sm:flex items-center justify-center w-8 h-8 rounded-full transition-colors ${
                 fullWidth ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-500 hover:text-gray-800"
@@ -627,7 +641,7 @@ export function Editor({ source }: EditorProps) {
               <div className="px-3 py-2 border-b border-gray-100 bg-[#fafafa] shrink-0">
                 <TabsList className="grid w-full grid-cols-2 bg-gray-200/50 p-1">
                   <TabsTrigger value="edit" className="text-xs rounded shadow-sm data-[state=active]:bg-white">Edit</TabsTrigger>
-                  <TabsTrigger value="preview" className="text-xs rounded shadow-sm data-[state=active]:bg-white">{isStructured ? "Formatted" : isDrawio ? "Diagram" : isHtml ? "HTML" : "Preview"}</TabsTrigger>
+                  <TabsTrigger value="preview" className="text-xs rounded shadow-sm data-[state=active]:bg-white">{isStructured ? "Formatted" : isDiagramFile ? "Diagram" : isHtml ? "HTML" : "Preview"}</TabsTrigger>
                 </TabsList>
               </div>
               <TabsContent value="edit" className="flex-1 p-0 m-0 data-[state=active]:flex flex-col min-h-0">
@@ -646,15 +660,17 @@ export function Editor({ source }: EditorProps) {
                 {isHtml ? (
                   <iframe
                     title={`${title} preview`}
-                    srcDoc={htmlPreviewDocument(content)}
+                    srcDoc={htmlPreviewDocument(deferredContent)}
                     sandbox=""
                     referrerPolicy="no-referrer"
                     className="h-full min-h-0 w-full border-0 bg-white"
                     data-testid="html-preview"
                   />
-                ) : isDrawio ? <DrawioFileView xml={content} /> : isStructured ? structuredPreview : (
+                ) : isDrawio ? <DrawioFileView xml={deferredContent} />
+                  : isMermaid ? <div className="h-[70vh]"><MermaidFileView code={deferredContent} /></div>
+                  : isStructured ? structuredPreview : (
                   <MarkdownPreview
-                    content={content}
+                    content={deferredContent}
                     docPath={source.path}
                     rootFolder={rootFolder}
                     className="prose prose-sm prose-slate max-w-none prose-headings:tracking-tight"

@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
-  Code2, File, FileJson, FileSpreadsheet, FileText, FileType, Globe, Image as ImageIcon, LocateFixed, Pin, PinOff, Trash2,
-  Workflow, X, XSquare,
+  Code2, Eye, EyeOff, File, FileJson, FileSpreadsheet, FileText, FileType, Globe, Image as ImageIcon, Layers, LocateFixed,
+  Pin, PinOff, Shapes, Trash2, Workflow, X, XSquare,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { PathMenuItems, useRootFolderOf, useTabsInFolder } from "@/components/layout/path-actions";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { PathMenuItems, useGroupOf, useRootFolderOf, useTabsInFolder } from "@/components/layout/path-actions";
 import { MoveMenuItem } from "@/components/layout/move-file-context";
 import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { useDeleteDocument, useDocuments } from "@/hooks/use-documents";
 import { baseName } from "@/lib/fs-api";
 import {
-  folderColour, orderedTabs, parseUri, useWorkspace, useWorkspaceActions,
+  folderColour, orderedTabs, parseUri, useWorkspace, useWorkspaceActions, type FolderGroup,
 } from "@/lib/workspace";
 import { fileKindOf, type FileKind } from "@shared/fs";
 
@@ -27,6 +30,8 @@ interface TabInfo {
   path?: string;
   dbId?: number;
   rootFolder?: { folder: string; index: number } | null;
+  /** Explorer group the file belongs to; a hidden group hides the tab. */
+  group?: FolderGroup | null;
 }
 
 function TabIcon({ type }: { type: TabInfo["type"] }) {
@@ -39,6 +44,7 @@ function TabIcon({ type }: { type: TabInfo["type"] }) {
   if (type === "image") return <ImageIcon className={`${cls} text-emerald-500`} />;
   if (type === "docx") return <FileType className={`${cls} text-blue-600`} />;
   if (type === "xlsx") return <FileSpreadsheet className={`${cls} text-green-600`} />;
+  if (type === "mermaid") return <Shapes className={`${cls} text-pink-500`} />;
   return <File className={`${cls} text-gray-400`} />;
 }
 
@@ -55,6 +61,7 @@ export function TabBar() {
   const deleteMutation = useDeleteDocument();
   const [, setLocation] = useLocation();
   const rootFolderOf = useRootFolderOf();
+  const groupOf = useGroupOf();
   const tabsInFolder = useTabsInFolder();
   const scroller = useRef<HTMLDivElement>(null);
   const reveal = useRevealInExplorer();
@@ -81,6 +88,7 @@ export function TabBar() {
         type: fileKindOf(ref.path),
         path: ref.path,
         rootFolder: rootFolderOf(ref.path),
+        group: groupOf(ref.path),
       };
     }).filter((t): t is TabInfo => t !== null);
 
@@ -90,7 +98,13 @@ export function TabBar() {
       if (t.path && (counts.get(t.label) ?? 0) > 1) t.detail = parentName(t.path);
     });
     return list;
-  }, [state, documents, rootFolderOf]);
+  }, [state, documents, rootFolderOf, groupOf]);
+
+  // Tabs in hidden groups stay open but leave the tab bar. The active tab
+  // always shows, so the editor never displays a document without a tab.
+  const isHidden = (t: TabInfo) => !!t.group?.hidden && t.uri !== activeUri;
+  const visibleTabs = tabs.filter(t => !isHidden(t));
+  const hiddenTabs = tabs.filter(isHidden);
 
   // Keep the active tab in view when the wrapped tab area has to scroll.
   useEffect(() => {
@@ -123,8 +137,9 @@ export function TabBar() {
     const active = tab.uri === activeUri;
     const pinned = state.pinned.includes(tab.uri);
     const colour = tab.rootFolder ? folderColour(tab.rootFolder.index) : null;
-    const toTheRight = tabs.slice(index + 1).filter(t => !state.pinned.includes(t.uri)).map(t => t.uri);
-    const others = tabs.filter(t => t.uri !== tab.uri && !state.pinned.includes(t.uri)).map(t => t.uri);
+    // Bulk closes act on the tabs you can see, never on hidden ones.
+    const toTheRight = visibleTabs.slice(index + 1).filter(t => !state.pinned.includes(t.uri)).map(t => t.uri);
+    const others = visibleTabs.filter(t => t.uri !== tab.uri && !state.pinned.includes(t.uri)).map(t => t.uri);
     const inFolder = tab.rootFolder ? tabsInFolder(tab.rootFolder.folder) : [];
 
     return (
@@ -156,6 +171,11 @@ export function TabBar() {
             )}
             <TabIcon type={tab.type} />
             <span className="truncate">{tab.label}</span>
+            {tab.group?.hidden && (
+              <span title={`In hidden group “${tab.group.name}”`} data-testid="tab-hidden-group">
+                <EyeOff className="w-3 h-3 shrink-0 text-gray-400" />
+              </span>
+            )}
             {tab.detail && <span className="truncate text-[10px] text-gray-400 shrink">{tab.detail}</span>}
             <button
               className={`ml-0.5 flex items-center justify-center w-4 h-4 rounded shrink-0 hover:bg-gray-300/70 ${
@@ -186,7 +206,7 @@ export function TabBar() {
               Close Tabs in “{baseName(tab.rootFolder.folder)}” ({inFolder.length})
             </ContextMenuItem>
           )}
-          <ContextMenuItem onSelect={() => close(tabs.filter(t => !state.pinned.includes(t.uri)).map(t => t.uri))}>
+          <ContextMenuItem onSelect={() => close(visibleTabs.filter(t => !state.pinned.includes(t.uri)).map(t => t.uri))}>
             <XSquare className="w-3.5 h-3.5 mr-2" /> Close All
           </ContextMenuItem>
           <ContextMenuSeparator />
@@ -218,8 +238,8 @@ export function TabBar() {
     );
   };
 
-  const pinnedTabs = tabs.filter(t => state.pinned.includes(t.uri));
-  const otherTabs = tabs.filter(t => !state.pinned.includes(t.uri));
+  const pinnedTabs = visibleTabs.filter(t => state.pinned.includes(t.uri));
+  const otherTabs = visibleTabs.filter(t => !state.pinned.includes(t.uri));
 
   return (
     // Capped height: with very many tabs the area scrolls instead of pushing the editor down.
@@ -229,15 +249,56 @@ export function TabBar() {
           <span className="flex items-center h-8 px-2 shrink-0 text-amber-500 border-b border-gray-200" title="Pinned tabs">
             <Pin className="w-3 h-3 fill-amber-500" />
           </span>
-          {pinnedTabs.map(tab => renderTab(tab, tabs.indexOf(tab)))}
+          {pinnedTabs.map(tab => renderTab(tab, visibleTabs.indexOf(tab)))}
         </TabRow>
       )}
       <TabRow label="Open tabs" testId="tab-row-open">
         {otherTabs.length === 0
           ? <span className="flex items-center h-8 px-3 text-[12px] text-gray-400">No other open tabs</span>
-          : otherTabs.map(tab => renderTab(tab, tabs.indexOf(tab)))}
+          : otherTabs.map(tab => renderTab(tab, visibleTabs.indexOf(tab)))}
+        {hiddenTabs.length > 0 && <HiddenTabsMenu tabs={hiddenTabs} onOpen={open} />}
       </TabRow>
     </div>
+  );
+}
+
+/** Chip at the end of the tab row: how many tabs hidden groups hold, and how to get them back. */
+function HiddenTabsMenu({ tabs, onOpen }: { tabs: TabInfo[]; onOpen(uri: string): void }) {
+  const { setGroupHidden } = useWorkspaceActions();
+  const groups = Array.from(new Map(tabs.map(t => [t.group!.id, t.group!])).values());
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex items-center gap-1 h-8 px-2.5 shrink-0 text-[11px] text-gray-500 hover:bg-gray-100 border-b border-gray-200"
+          title="Tabs hidden by explorer groups"
+          data-testid="button-hidden-tabs"
+        >
+          <EyeOff className="w-3 h-3" /> {tabs.length} hidden
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64 max-h-[60vh] overflow-y-auto">
+        <DropdownMenuLabel className="text-[11px] text-gray-500 font-medium">Hidden groups</DropdownMenuLabel>
+        {groups.map(g => (
+          <DropdownMenuItem key={g.id} onSelect={() => setGroupHidden(g.id, false)} data-testid={`menu-show-group-${g.id}`}>
+            <Eye className="w-3.5 h-3.5 mr-2" />
+            <span className="truncate">Show “{g.name}” tabs</span>
+            <span className="ml-auto pl-2 text-[10px] text-gray-400">{tabs.filter(t => t.group?.id === g.id).length}</span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-[11px] text-gray-500 font-medium">Open a hidden tab</DropdownMenuLabel>
+        {tabs.map(t => (
+          <DropdownMenuItem key={t.uri} onSelect={() => onOpen(t.uri)} title={t.tooltip}>
+            <TabIcon type={t.type} />
+            <span className="ml-2 truncate">{t.label}</span>
+            <span className="ml-auto pl-2 flex items-center gap-1 text-[10px] text-gray-400 shrink-0">
+              <Layers className="w-2.5 h-2.5" />{t.group?.name}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

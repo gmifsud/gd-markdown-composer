@@ -11,4 +11,12 @@ contextBridge.exposeInMainWorld('mdcDesktop', {
   revealPath: (targetPath) => ipcRenderer.invoke('mdc:reveal-path', targetPath),
   /** Opens a document in its default app (Word, Excel…). */
   openPath: (targetPath) => ipcRenderer.invoke('mdc:open-path', targetPath),
+  /** Files the OS asked the app to open that the page hasn't taken yet (the queue is emptied). */
+  takePendingFiles: () => ipcRenderer.invoke('mdc:take-pending-files'),
+  /** Calls `callback` when more files are waiting; returns an unsubscribe function. */
+  onFilesPending: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('mdc:files-pending', listener);
+    return () => ipcRenderer.removeListener('mdc:files-pending', listener);
+  },
 });

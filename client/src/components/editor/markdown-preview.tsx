@@ -1,14 +1,14 @@
-import { createContext, memo, useContext, useMemo, useState, type ComponentPropsWithoutRef, type MouseEvent } from "react";
+import { createContext, memo, useContext, useMemo, useRef, useState, type ComponentPropsWithoutRef, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { useLocation } from "wouter";
-import { ChevronDown, ChevronRight, ImageOff, TextSelect } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, ImageOff, TextSelect } from "lucide-react";
 import { DiagramBlock, DIAGRAM_LANGUAGES } from "@/components/editor/diagrams";
 import { Expandable } from "@/components/editor/lightbox";
-import { useFsStatus } from "@/lib/fs-api";
+import { copyText, useFsStatus } from "@/lib/fs-api";
 import { rewriteWikiEmbeds, splitFrontMatter, WIDTH_TITLE_PREFIX } from "@/lib/markdown-source";
 import { useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 import rehypeHighlight from "rehype-highlight";
@@ -122,32 +122,93 @@ function PreviewPre({ node, children, ...rest }: ComponentPropsWithoutRef<"pre">
       return <DiagramBlock kind={kind} code={text} />;
     }
   }
+  return <CodeBlock language={language} preProps={rest}>{children}</CodeBlock>;
+}
+
+const codeButton =
+  "flex h-6 items-center gap-1 rounded px-1.5 text-slate-300 hover:bg-slate-700 hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-400";
+
+/**
+ * A fenced code block. Drag-selecting an exact block with the mouse is
+ * fiddly (the drag spills into the surrounding text), so a block can also be
+ * selected as a unit: click into it and press Ctrl/Cmd+A, or use Select all.
+ */
+function CodeBlock({ language, preProps, children }: {
+  language?: string;
+  preProps: ComponentPropsWithoutRef<"pre">;
+  children: ReactNode;
+}) {
+  const pre = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  const selectBlock = () => {
+    const el = pre.current?.querySelector("code") ?? pre.current;
+    const selection = window.getSelection();
+    if (!el || !selection) return;
+    const range = window.document.createRange();
+    range.selectNodeContents(el);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLPreElement>) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      selectBlock();
+    }
+  };
+
+  const copy = async () => {
+    const text = (pre.current?.textContent ?? "").replace(/\n$/, "");
+    try {
+      await copyText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard unavailable; the block can still be selected and copied by hand.
+    }
+  };
+
   return (
     <div className="mdc-code-block not-prose my-4 overflow-hidden rounded-lg border border-slate-700 bg-[#0b1220] text-gray-100" data-code-block>
       <div className="flex h-8 items-center justify-between border-b border-slate-700 bg-slate-800/70 px-3 text-[11px] text-slate-300">
         <span className="font-mono uppercase tracking-wide" data-code-language>{language || "text"}</span>
-        <button
-          type="button"
-          className="flex h-6 items-center gap-1 rounded px-1.5 text-slate-300 hover:bg-slate-700 hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-400"
-          title="Select all code"
-          aria-label="Select all code"
-          onClick={event => {
-            const codeElement = event.currentTarget.closest("[data-code-block]")?.querySelector("code");
-            if (!codeElement) return;
-            const selection = window.getSelection();
-            if (!selection) return;
-            const range = window.document.createRange();
-            range.selectNodeContents(codeElement);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }}
-          data-testid="select-code"
-        >
-          <TextSelect className="h-3.5 w-3.5" />
-          <span>Select all</span>
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className={codeButton}
+            // Keep the click from moving focus and collapsing the selection it makes.
+            onMouseDown={e => e.preventDefault()}
+            onClick={selectBlock}
+            title="Select all code (or click in the code and press Ctrl+A)"
+            aria-label="Select all code"
+            data-testid="select-code"
+          >
+            <TextSelect className="h-3.5 w-3.5" />
+            <span>Select all</span>
+          </button>
+          <button
+            type="button"
+            className={codeButton}
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => void copy()}
+            title="Copy code"
+            aria-label="Copy code"
+            data-testid="copy-code"
+          >
+            {copied ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-3.5 w-3.5" />}
+            <span>{copied ? "Copied" : "Copy"}</span>
+          </button>
+        </div>
       </div>
-      <pre {...rest} className="!m-0 !overflow-x-auto !rounded-none !bg-transparent !p-4">
+      <pre
+        {...preProps}
+        ref={pre}
+        // Focusable so Ctrl/Cmd+A can select just this block.
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        className="!m-0 !overflow-x-auto !rounded-none !bg-transparent !p-4 cursor-text focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60"
+      >
         {children}
       </pre>
     </div>
