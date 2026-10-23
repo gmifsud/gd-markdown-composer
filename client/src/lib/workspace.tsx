@@ -1,7 +1,8 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode,
+  createContext, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode,
 } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
+import { isInside } from "@/lib/fs-api";
 
 /**
  * Workspace state: open folders, open tabs, pins, explorer expansion and
@@ -53,8 +54,23 @@ export type EditorMode = "edit" | "split" | "preview";
 /** Explorer order inside each folder (folders always come before files). */
 export type ExplorerSort = "name" | "modified";
 
+/**
+ * A named section of the explorer. A folder belongs to at most one group;
+ * workspace roots in a group move out of the ungrouped list, and folders
+ * inside a root show up as extra entries.
+ */
+export interface FolderGroup {
+  id: string;
+  name: string;
+  folders: string[];
+  /** Hide tabs of files inside this group's folders from the tab bar. */
+  hidden: boolean;
+  collapsed: boolean;
+}
+
 export interface WorkspaceState {
   folders: string[];
+  groups: FolderGroup[];
   openTabs: string[];
   pinned: string[];
   expanded: string[];
@@ -80,6 +96,7 @@ const STORAGE_KEY = "mdc.workspace.v1";
 
 const initialState: WorkspaceState = {
   folders: [],
+  groups: [],
   openTabs: [],
   pinned: [],
   expanded: [],
@@ -129,9 +146,25 @@ type Action =
   | { type: "diagramMode"; mode: EditorMode }
   | { type: "explorer"; patch: Partial<WorkspaceState["explorer"]> }
   | { type: "frontMatterOpen"; value: boolean }
-  | { type: "compact"; value: boolean };
+  | { type: "compact"; value: boolean }
+  | { type: "createGroup"; id: string; name: string; folder?: string }
+  | { type: "updateGroup"; id: string; patch: Partial<Pick<FolderGroup, "name" | "hidden" | "collapsed">> }
+  | { type: "deleteGroup"; id: string }
+  | { type: "moveGroup"; id: string; delta: -1 | 1 }
+  | { type: "setFolderGroup"; path: string; groupId: string | null };
 
 const clampWidth = (w: number) => Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w)));
+
+/** Removes `path` from every group, then adds it to `groupId` (null: ungrouped). */
+function assignFolder(groups: FolderGroup[], path: string, groupId: string | null): FolderGroup[] {
+  // Already there: keep its position.
+  if (groupId && groups.find(g => g.id === groupId)?.folders.includes(path)) return groups;
+  return groups.map(g => {
+    const folders = g.folders.filter(f => f !== path);
+    if (g.id === groupId) folders.push(path);
+    return folders.length === g.folders.length && g.id !== groupId ? g : { ...g, folders };
+  });
+}
 
 function reducer(state: WorkspaceState, action: Action): WorkspaceState {
   switch (action.type) {
@@ -175,7 +208,30 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       return { ...state, folders: [...state.folders, ...added], expanded: [...state.expanded, ...added] };
     }
     case "removeFolder":
-      return { ...state, folders: state.folders.filter(f => f !== action.path) };
+      return {
+        ...state,
+        folders: state.folders.filter(f => f !== action.path),
+        groups: assignFolder(state.groups, action.path, null),
+      };
+    case "createGroup": {
+      const group: FolderGroup = { id: action.id, name: action.name, folders: [], hidden: false, collapsed: false };
+      const groups = [...state.groups, group];
+      return { ...state, groups: action.folder ? assignFolder(groups, action.folder, action.id) : groups };
+    }
+    case "updateGroup":
+      return { ...state, groups: state.groups.map(g => (g.id === action.id ? { ...g, ...action.patch } : g)) };
+    case "deleteGroup":
+      return { ...state, groups: state.groups.filter(g => g.id !== action.id) };
+    case "moveGroup": {
+      const from = state.groups.findIndex(g => g.id === action.id);
+      const to = from + action.delta;
+      if (from < 0 || to < 0 || to >= state.groups.length) return state;
+      const groups = [...state.groups];
+      [groups[from], groups[to]] = [groups[to], groups[from]];
+      return { ...state, groups };
+    }
+    case "setFolderGroup":
+      return { ...state, groups: assignFolder(state.groups, action.path, action.groupId) };
     case "expandMany": {
       const missing = action.paths.filter(p => !state.expanded.includes(p));
       return missing.length ? { ...state, expanded: [...state.expanded, ...missing] } : state;
@@ -222,11 +278,97 @@ interface WorkspaceContextValue {
   dispatch: (action: Action) => void;
 }
 
+export type WorkspaceActions = ReturnType<typeof createActions>;
+
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
+// Actions live in their own context with a stable value, so components that
+// only act on the workspace don't re-render on every workspace change.
+const WorkspaceActionsContext = createContext<WorkspaceActions | null>(null);
+
+const newGroupId = () => `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+/**
+ * `current` is read when an action runs (event time), never during render,
+ * so the actions object can stay the same for the provider's lifetime.
+ */
+function createActions(
+  dispatch: (action: Action) => void,
+  current: {
+    readonly state: WorkspaceState;
+    activeUri: string | null;
+    navigate(to: string, options?: { replace?: boolean }): void;
+  },
+) {
+  return {
+    open(uri: string) {
+      dispatch({ type: "open", uri, after: current.activeUri });
+      current.navigate(hrefFor(uri));
+      // The URL now shows `uri`; record that before the next render does, so
+      // several opens in a row each land after the previous one, in order.
+      current.activeUri = uri;
+    },
+    /** Closes tabs; if the active one closes, moves to its nearest open neighbour. */
+    close(uris: string[]) {
+      if (uris.length === 0) return;
+      const closing = new Set(uris);
+      const { activeUri, state } = current;
+      if (activeUri && closing.has(activeUri)) {
+        const tabs = orderedTabs(state);
+        const index = tabs.indexOf(activeUri);
+        const remaining = (list: string[]) => list.find(u => !closing.has(u));
+        const next = remaining(tabs.slice(index + 1)) ?? remaining(tabs.slice(0, index).reverse());
+        current.navigate(next ? hrefFor(next) : "/");
+      }
+      dispatch({ type: "close", uris });
+    },
+    /** A file moved on disk: its tab (and pin) follow it, and the editor reopens it at the new path. */
+    retarget(from: string, to: string) {
+      dispatch({ type: "retarget", from, to });
+      // Moves finish asynchronously; `current` holds the tab that is active now, not when the move began.
+      if (current.activeUri === from) {
+        current.navigate(hrefFor(to), { replace: true });
+        current.activeUri = to;
+      }
+    },
+    togglePin: (uri: string) => dispatch({ type: "togglePin", uri }),
+    addFolders: (paths: string[]) => dispatch({ type: "addFolders", paths }),
+    removeFolder: (path: string) => dispatch({ type: "removeFolder", path }),
+    setExpanded: (path: string, expanded: boolean) => dispatch({ type: "setExpanded", path, expanded }),
+    expandMany: (paths: string[]) => dispatch({ type: "expandMany", paths }),
+    setSidebar: (patch: Partial<WorkspaceState["sidebar"]>) => dispatch({ type: "sidebar", patch }),
+    pruneDb: (existingIds: number[]) => dispatch({ type: "pruneDb", existingIds }),
+    setEditorMode: (mode: EditorMode) => dispatch({ type: "editorMode", mode }),
+    setPreviewFullWidth: (value: boolean) => dispatch({ type: "previewFullWidth", value }),
+    setDiagramMode: (mode: EditorMode) => dispatch({ type: "diagramMode", mode }),
+    setExplorer: (patch: Partial<WorkspaceState["explorer"]>) => dispatch({ type: "explorer", patch }),
+    setFrontMatterOpen: (value: boolean) => dispatch({ type: "frontMatterOpen", value }),
+    setCompact: (value: boolean) => dispatch({ type: "compact", value }),
+    /** Creates a group (optionally moving `folder` into it); returns its id. */
+    createGroup(name: string, folder?: string) {
+      const id = newGroupId();
+      dispatch({ type: "createGroup", id, name, folder });
+      return id;
+    },
+    renameGroup: (id: string, name: string) => dispatch({ type: "updateGroup", id, patch: { name } }),
+    setGroupHidden: (id: string, hidden: boolean) => dispatch({ type: "updateGroup", id, patch: { hidden } }),
+    setGroupCollapsed: (id: string, collapsed: boolean) => dispatch({ type: "updateGroup", id, patch: { collapsed } }),
+    /** Deletes the group; its folders stay in the workspace, ungrouped. */
+    deleteGroup: (id: string) => dispatch({ type: "deleteGroup", id }),
+    moveGroup: (id: string, delta: -1 | 1) => dispatch({ type: "moveGroup", id, delta }),
+    /** Moves a folder into a group, or out of every group with null. */
+    setFolderGroup: (path: string, groupId: string | null) => dispatch({ type: "setFolderGroup", path, groupId }),
+  };
+}
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, loadState);
   const activeUri = useActiveUri();
+  const [, setLocation] = useLocation();
+
+  const current = useRef({ state, activeUri, navigate: setLocation });
+  current.current.state = state;
+  current.current.activeUri = activeUri;
+  current.current.navigate = setLocation;
 
   useEffect(() => {
     try {
@@ -241,13 +383,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (activeUri) dispatch({ type: "open", uri: activeUri, after: null });
   }, [activeUri]);
 
+  const actions = useMemo(() => createActions(dispatch, current.current), []);
   const value = useMemo(() => ({ state, activeUri, dispatch }), [state, activeUri]);
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+  return (
+    <WorkspaceActionsContext.Provider value={actions}>
+      <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+    </WorkspaceActionsContext.Provider>
+  );
 }
 
 export function useWorkspace() {
   const ctx = useContext(WorkspaceContext);
   if (!ctx) throw new Error("useWorkspace must be used inside WorkspaceProvider");
+  return ctx;
+}
+
+/** Workspace actions; the returned object never changes, so using it doesn't cause re-renders. */
+export function useWorkspaceActions() {
+  const ctx = useContext(WorkspaceActionsContext);
+  if (!ctx) throw new Error("useWorkspaceActions must be used inside WorkspaceProvider");
   return ctx;
 }
 
@@ -258,57 +412,23 @@ export function orderedTabs(state: WorkspaceState) {
   return [...pinned, ...rest];
 }
 
-export function useWorkspaceActions() {
-  const { state, activeUri, dispatch } = useWorkspace();
-  const [, setLocation] = useLocation();
+// ── Groups ───────────────────────────────────────────────────────────────────
 
-  const open = useCallback((uri: string) => {
-    dispatch({ type: "open", uri, after: activeUri });
-    setLocation(hrefFor(uri));
-  }, [activeUri, dispatch, setLocation]);
-
-  /** Closes tabs; if the active one closes, moves to its nearest open neighbour. */
-  const close = useCallback((uris: string[]) => {
-    if (uris.length === 0) return;
-    const closing = new Set(uris);
-    if (activeUri && closing.has(activeUri)) {
-      const tabs = orderedTabs(state);
-      const index = tabs.indexOf(activeUri);
-      const remaining = (list: string[]) => list.find(u => !closing.has(u));
-      const next = remaining(tabs.slice(index + 1)) ?? remaining(tabs.slice(0, index).reverse());
-      setLocation(next ? hrefFor(next) : "/");
+/**
+ * The group a path belongs to: the group holding the innermost folder that
+ * contains it (longest-prefix match, so a nested folder's group wins over
+ * its parent's).
+ */
+export function groupOf(groups: FolderGroup[], path: string, caseInsensitive: boolean): FolderGroup | null {
+  let best: { group: FolderGroup; length: number } | null = null;
+  for (const group of groups) {
+    for (const folder of group.folders) {
+      if (isInside(path, folder, caseInsensitive) && (!best || folder.length > best.length)) {
+        best = { group, length: folder.length };
+      }
     }
-    dispatch({ type: "close", uris });
-  }, [activeUri, dispatch, setLocation, state]);
-
-  // Moves finish asynchronously, so check the tab that is active now rather than when the move began.
-  const activeRef = useRef(activeUri);
-  activeRef.current = activeUri;
-
-  /** A file moved on disk: its tab (and pin) follow it, and the editor reopens it at the new path. */
-  const retarget = useCallback((from: string, to: string) => {
-    dispatch({ type: "retarget", from, to });
-    if (activeRef.current === from) setLocation(hrefFor(to), { replace: true });
-  }, [dispatch, setLocation]);
-
-  return {
-    open,
-    close,
-    retarget,
-    togglePin: (uri: string) => dispatch({ type: "togglePin", uri }),
-    addFolders: (paths: string[]) => dispatch({ type: "addFolders", paths }),
-    removeFolder: (path: string) => dispatch({ type: "removeFolder", path }),
-    setExpanded: (path: string, expanded: boolean) => dispatch({ type: "setExpanded", path, expanded }),
-    expandMany: (paths: string[]) => dispatch({ type: "expandMany", paths }),
-    setSidebar: (patch: Partial<WorkspaceState["sidebar"]>) => dispatch({ type: "sidebar", patch }),
-    pruneDb: (existingIds: number[]) => dispatch({ type: "pruneDb", existingIds }),
-    setEditorMode: (mode: EditorMode) => dispatch({ type: "editorMode", mode }),
-    setPreviewFullWidth: (value: boolean) => dispatch({ type: "previewFullWidth", value }),
-    setDiagramMode: (mode: EditorMode) => dispatch({ type: "diagramMode", mode }),
-    setExplorer: (patch: Partial<WorkspaceState["explorer"]>) => dispatch({ type: "explorer", patch }),
-    setFrontMatterOpen: (value: boolean) => dispatch({ type: "frontMatterOpen", value }),
-    setCompact: (value: boolean) => dispatch({ type: "compact", value }),
-  };
+  }
+  return best?.group ?? null;
 }
 
 // ── Folder colours (tab hints and explorer roots) ────────────────────────────

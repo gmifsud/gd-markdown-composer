@@ -24,6 +24,19 @@ asar: true
 asarUnpack:
   - dist/**/*
 
+# Registers the app as an "Open with" handler (and lets it be chosen as the
+# default) for these types. The path arrives in argv / 'open-file' and is
+# opened by electron/main.cjs.
+fileAssociations:
+  - ext: [md, markdown]
+    name: Markdown Document
+    description: Markdown document
+    role: Editor
+  - ext: [mermaid, mmd]
+    name: Mermaid Diagram
+    description: Mermaid diagram
+    role: Editor
+
 # PlantUML jar (run with the user's Java), fetched by script/fetch-vendor.mjs.
 extraResources:
   - from: "vendor/plantuml/"

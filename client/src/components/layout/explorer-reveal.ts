@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import { focusExplorerSearch, useExplorerSearch } from "@/components/layout/explorer-search";
 import { useRootFolderOf } from "@/components/layout/path-actions";
 import { useToast } from "@/hooks/use-toast";
-import { parseUri, useWorkspaceActions } from "@/lib/workspace";
+import { parseUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 
 // The explorer row for this path scrolls into view and flashes once it renders
 // (its folder may still be loading), then clears it.
@@ -28,7 +28,8 @@ export function useRevealTarget() {
  */
 export function useRevealInExplorer() {
   const rootFolderOf = useRootFolderOf();
-  const { expandMany, setSidebar } = useWorkspaceActions();
+  const { state } = useWorkspace();
+  const { expandMany, setSidebar, setGroupCollapsed } = useWorkspaceActions();
   const { query, clear } = useExplorerSearch();
   const { toast } = useToast();
 
@@ -48,11 +49,14 @@ export function useRevealInExplorer() {
     const folders = ref.path.slice(root.folder.length).split(/[\\/]+/).filter(Boolean).slice(0, -1);
     let current = root.folder.replace(/[\\/]+$/, "");
     expandMany([root.folder, ...folders.map(part => (current = `${current}${sep}${part}`))]);
+    // A workspace folder inside a collapsed explorer group isn't rendered; open the group.
+    const group = state.groups.find(g => g.folders.includes(root.folder));
+    if (group?.collapsed) setGroupCollapsed(group.id, false);
     // A search filter would hide the file.
     if (query) clear();
     if (!options.keepPanel) setSidebar({ visible: true, panel: "explorer" });
     setRevealTarget(ref.path);
-  }, [rootFolderOf, expandMany, setSidebar, query, clear, toast]);
+  }, [rootFolderOf, state.groups, expandMany, setSidebar, setGroupCollapsed, query, clear, toast]);
 }
 
 // Re-exported for callers that open the explorer with its search focused.
