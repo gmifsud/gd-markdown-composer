@@ -20,7 +20,7 @@ What the app does well, based on the code and recent commits:
 - **Workbench UI.** Explorer groups with tab hiding, pinned tabs, close commands, outline panel, explorer search, view modes, find in document, code-block select and copy, foldable front matter, `![[image]]` embeds.
 - **Runs on desktop and the web.** The Electron app registers file types with the OS. The same app runs self-hosted in a browser.
 
-Where we fall behind: the editor is still a plain `<textarea>` (`client/src/components/editor/find.tsx:109`). So the markdown source has no syntax highlighting, there are no formatting shortcuts or replace, and undo is fragile. We also have no command palette, no content search for database documents (folders already have it, with Ctrl+Shift+F), no dark theme, no export to PDF or HTML, no image paste and no math.
+Where we fall behind: ~~the editor is still a plain `<textarea>`~~ *(done 2026-11-21: the source editor is now CodeMirror 6, with highlighting, formatting shortcuts, find and replace, and undo that survives Format; see [the plan](superpowers/plans/2026-11-21-codemirror-editor.md))*. We still have no command palette, no content search for database documents (folders already have it, with Ctrl+Shift+F), no dark theme, no export to PDF or HTML, no image paste and no math.
 
 ---
 
@@ -51,9 +51,9 @@ Legend: ✅ yes · 🟡 partial or via plugin · ❌ no
 | Feature | **Us** | Typora | Obsidian | VS Code (built-in md) | MarkText | Zettlr | HackMD / HedgeDoc | iA Writer |
 |---|---|---|---|---|---|---|---|---|
 | Editing model | Source + preview | Inline WYSIWYG | Live Preview / source | Source + preview | Inline WYSIWYG | Source (styled) | Source + preview | Styled source |
-| Source syntax highlighting | ❌ | n/a | ✅ | ✅ | n/a | ✅ | ✅ | ✅ |
-| Formatting shortcuts / toolbar | ❌ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ |
-| Find & **replace** | 🟡 find only | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Source syntax highlighting | ✅ | n/a | ✅ | ✅ | n/a | ✅ | ✅ | ✅ |
+| Formatting shortcuts / toolbar | 🟡 shortcuts, no toolbar | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ |
+| Find & **replace** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tabs / multiple open docs | ✅ | ❌ (one doc per window) | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 |
 | File tree / multiple folders | ✅ multi-root + groups | 🟡 | ✅ one vault | ✅ | 🟡 weak | ✅ | ❌ | 🟡 |
 | Quick open / command palette | ❌ | 🟡 | ✅ | ✅ | 🟡 | 🟡 | ❌ | 🟡 |
