@@ -3,8 +3,8 @@ import {
   EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, placeholder,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, indentOnInput } from "@codemirror/language";
-import { linter, lintGutter } from "@codemirror/lint";
+import { bracketMatching, ensureSyntaxTree, indentOnInput, language, syntaxTree } from "@codemirror/language";
+import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import type { FileKind } from "@shared/fs";
 import { jsonDiagnostics, yamlDiagnostics } from "@/lib/structured";
 import { markdownFormattingKeymap } from "./markdown-commands";
@@ -49,6 +49,35 @@ export function docText(state: EditorState): string {
   return state.doc.sliceString(0, state.doc.length, state.facet(fileLineBreak));
 }
 
+const MESSAGE_HAS_POSITION = /at position \d+|line \d+ column \d+/;
+
+/**
+ * Inline errors for JSON and YAML documents, in editor positions. When the
+ * JSON engine's message has no position (JavaScriptCore always, V8 for an
+ * unexpected token), the first error node in the JSON syntax tree marks it.
+ */
+export function structuredDiagnostics(state: EditorState): Diagnostic[] {
+  // The "\n"-joined text, so offsets are editor positions whatever the line endings.
+  const text = state.doc.toString();
+  const name = state.facet(language)?.name;
+  if (name === "yaml") return yamlDiagnostics(text);
+  if (name !== "json") return [];
+  const found = jsonDiagnostics(text);
+  if (!found.length || MESSAGE_HAS_POSITION.test(found[0].message)) return found;
+  const tree = ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state);
+  let at = -1;
+  tree.iterate({
+    enter: (node) => {
+      if (at < 0 && node.type.isError) at = node.from;
+      return at < 0;
+    },
+  });
+  if (at < 0) return found;
+  const length = state.doc.length;
+  const from = at < length ? at : Math.max(0, length - 1);
+  return [{ ...found[0], from, to: Math.min(from + 1, length) }];
+}
+
 // Module-level so their identity survives StateEffect.reconfigure (saved states).
 const themeSlot = new Compartment();
 const wrapSlot = new Compartment();
@@ -64,7 +93,7 @@ const readOnlyFor = (config: SourceEditorConfig) => [
 function buildExtensions(text: string, config: SourceEditorConfig): Extension[] {
   const { fileType } = config;
   const isMarkdown = fileType === "md";
-  const diagnostics = fileType === "json" ? jsonDiagnostics : fileType === "yaml" ? yamlDiagnostics : null;
+  const linted = fileType === "json" || fileType === "yaml";
   return [
     fileLineBreak.of(lineSeparatorOf(text)),
     history(),
@@ -87,8 +116,7 @@ function buildExtensions(text: string, config: SourceEditorConfig): Extension[] 
       ? frontMatterFold({ initiallyHidden: config.frontMatterHidden, onUnfold: () => config.onUnfoldFrontMatter() })
       : [],
     findHighlightField,
-    // Diagnostics read the "\n"-joined text, so their offsets are editor positions.
-    diagnostics ? [linter(view => diagnostics(view.state.doc.toString()), { delay: 300 }), lintGutter()] : [],
+    linted ? [linter(view => structuredDiagnostics(view.state), { delay: 300 }), lintGutter()] : [],
     EditorView.contentAttributes.of({ "aria-label": `${languageLabel(fileType)} source` }),
     EditorView.updateListener.of(update => {
       if (update.docChanged) config.onDocChange(docText(update.state));

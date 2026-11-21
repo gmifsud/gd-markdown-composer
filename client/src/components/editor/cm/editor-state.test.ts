@@ -2,7 +2,8 @@ import { test, expect } from "bun:test";
 import { undo } from "@codemirror/commands";
 import { language } from "@codemirror/language";
 import {
-  createEditorState, docText, lineSeparatorOf, reconfigure, restoreEditorState, type SourceEditorConfig,
+  createEditorState, docText, lineSeparatorOf, reconfigure, restoreEditorState, structuredDiagnostics,
+  type SourceEditorConfig,
 } from "./editor-state";
 
 const cfg: SourceEditorConfig = {
@@ -64,6 +65,19 @@ test("restoreEditorState keeps undo history", () => {
   undo({ state: r, dispatch: tr => { r = tr.state; } });
   expect(docText(r)).toBe("abc");
   expect(restoreEditorState(s, "different", cfg)).toBeNull();
+});
+
+test("JSON errors without a position in the message are placed by the syntax tree", () => {
+  // JavaScriptCore (bun) and current V8 both omit the position for an unexpected token.
+  const s = createEditorState('{"a": 1,\n  "b": }', { ...cfg, fileType: "json" });
+  const [d] = structuredDiagnostics(s);
+  expect(s.doc.lineAt(d.from).number).toBe(2);
+  expect(d.to).toBeGreaterThan(d.from);
+});
+
+test("YAML diagnostics keep the parser's own position", () => {
+  const s = createEditorState("a: 1\nb: [", { ...cfg, fileType: "yaml" });
+  expect(structuredDiagnostics(s)[0].severity).toBe("error");
 });
 
 test("restoreEditorState keeps a CRLF document byte for byte", () => {

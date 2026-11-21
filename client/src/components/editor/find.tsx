@@ -1,19 +1,5 @@
-import { forwardRef, useEffect, useLayoutEffect, useRef, type ReactNode, type TextareaHTMLAttributes } from "react";
+import { useEffect, useRef } from "react";
 import { ArrowDown, ArrowUp, CaseSensitive, X } from "lucide-react";
-
-export type Range = [start: number, end: number];
-
-/** Every occurrence of `query` in `text` (case-insensitive unless `matchCase`). */
-export function findMatches(text: string, query: string, matchCase: boolean): Range[] {
-  if (!query) return [];
-  const haystack = matchCase ? text : text.toLowerCase();
-  const needle = matchCase ? query : query.toLowerCase();
-  const out: Range[] = [];
-  for (let at = haystack.indexOf(needle); at >= 0 && out.length < 10_000; at = haystack.indexOf(needle, at + needle.length)) {
-    out.push([at, at + needle.length]);
-  }
-  return out;
-}
 
 // ── Find bar ─────────────────────────────────────────────────────────────────
 
@@ -90,84 +76,6 @@ export function FindBar({
     </div>
   );
 }
-
-// ── Source textarea with match highlights ────────────────────────────────────
-
-interface SourceTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
-  value: string;
-  /** Matches to highlight, and which one is current. */
-  highlights?: { ranges: Range[]; current: number };
-  /** No soft wrapping (plain text files). */
-  noWrap?: boolean;
-}
-
-/**
- * A textarea with find highlights drawn on a layer behind it. The layer copies
- * the textarea's font, padding and wrapping and follows its scrolling, so the
- * marks line up with the text.
- */
-export const SourceTextarea = forwardRef<HTMLTextAreaElement, SourceTextareaProps>(function SourceTextarea(
-  { value, highlights, noWrap = false, className = "", onScroll, ...rest }, ref,
-) {
-  const layer = useRef<HTMLDivElement>(null);
-  const area = useRef<HTMLTextAreaElement | null>(null);
-  const show = !!highlights && highlights.ranges.length > 0;
-
-  const syncScroll = () => {
-    if (layer.current && area.current) {
-      layer.current.scrollTop = area.current.scrollTop;
-      layer.current.scrollLeft = area.current.scrollLeft;
-    }
-  };
-  useLayoutEffect(syncScroll);
-
-  let marked: ReactNode[] = [];
-  if (show) {
-    let from = 0;
-    highlights.ranges.forEach(([start, end], i) => {
-      if (start > from) marked.push(value.slice(from, start));
-      marked.push(
-        <mark key={start} className={i === highlights.current ? "bg-orange-300/80 text-transparent rounded-sm" : "bg-yellow-200/80 text-transparent rounded-sm"}>
-          {value.slice(start, end)}
-        </mark>,
-      );
-      from = end;
-    });
-    // A trailing line break needs a character after it to take up a line.
-    marked.push(value.slice(from) + "\n ");
-  }
-
-  const wrapClass = noWrap ? "whitespace-pre" : "whitespace-pre-wrap break-words";
-  // Both layers always reserve the vertical scrollbar so their text wraps at the same width.
-  const overflowClass = noWrap ? "overflow-scroll" : "overflow-y-scroll overflow-x-hidden";
-
-  return (
-    <div className="relative flex-1 min-h-0 flex">
-      {show && (
-        <div
-          ref={layer}
-          aria-hidden
-          className={`${className} ${wrapClass} ${overflowClass} mirror-scroll absolute inset-0 text-transparent pointer-events-none select-none`}
-          data-testid="find-highlight-layer"
-        >
-          {marked}
-        </div>
-      )}
-      <textarea
-        ref={(el) => {
-          area.current = el;
-          if (typeof ref === "function") ref(el);
-          else if (ref) ref.current = el;
-        }}
-        value={value}
-        wrap={noWrap ? "off" : undefined}
-        className={`${className} ${overflowClass} relative flex-1`}
-        onScroll={(e) => { syncScroll(); onScroll?.(e); }}
-        {...rest}
-      />
-    </div>
-  );
-});
 
 // ── Preview highlights (CSS Custom Highlight API) ────────────────────────────
 

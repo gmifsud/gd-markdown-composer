@@ -10,9 +10,13 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { MarkdownPreview } from "@/components/editor/markdown-preview";
 import { DrawioFileView, MermaidFileView } from "@/components/editor/diagrams";
 import { SaveButton } from "@/components/editor/save-button";
-import {
-  FindBar, SourceTextarea, clearPreviewPaint, findMatches, paintPreview, previewRanges,
-} from "@/components/editor/find";
+import { FindBar, clearPreviewPaint, paintPreview, previewRanges } from "@/components/editor/find";
+import { SourceEditor } from "@/components/editor/source-editor";
+import type { SavedEditor } from "@/components/editor/cm/editor-state";
+import { findInDoc, type Range } from "@/components/editor/cm/find";
+import { frontMatterEnd } from "@/components/editor/cm/front-matter-fold";
+import { EditorSelection } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { useRootFolderOf } from "@/components/layout/path-actions";
 import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { splitFrontMatter } from "@/lib/markdown-source";
@@ -24,7 +28,7 @@ import { useWorkspace, useWorkspaceActions, type EditorMode } from "@/lib/worksp
 import { clearActiveEditor, publishActiveEditor, registerRevealHandler } from "@/lib/active-editor";
 import type { FileKind } from "@shared/fs";
 import {
-  caretTop, lineRange, occurrencesBefore, revealHeadingInPreview, revealInTextarea, revealTextInPreview,
+  lineRangeInDoc, occurrencesBefore, revealHeadingInPreview, revealInEditor, revealTextInPreview,
 } from "@/components/editor/reveal";
 
 /** What the editor shows and how it saves: a database document or a file on disk. */
@@ -70,15 +74,6 @@ function htmlPreviewDocument(html: string) {
     return html.replace(/<!doctype[^>]*>/i, match => `${match}${HTML_PREVIEW_POLICY}`);
   }
   return `${HTML_PREVIEW_POLICY}${html}`;
-}
-
-/**
- * Which occurrence (0-based) the match at `offset` is, counting from the start
- * of the body: the preview shows no front matter, so matches inside a visible
- * front matter block (`skip` characters) are not counted.
- */
-function occurrencesBeforeOffset(text: string, offset: number, query: string, matchCase: boolean, skip: number) {
-  return findMatches(text.slice(0, offset), query, matchCase).filter(([start]) => start >= skip).length;
 }
 
 // Tighter Markdown preview: smaller type and less space between blocks.
@@ -137,22 +132,21 @@ export function Editor({ source }: EditorProps) {
   const revealInExplorer = useRevealInExplorer();
   const rootFolder = source.path ? rootFolderOf(source.path)?.folder ?? null : null;
 
-  // Markdown front matter can be folded away in the source: the textarea then
-  // edits only the body and the hidden block is put back in front on change.
+  // Markdown front matter can be folded away in the source. The editor always
+  // holds the whole file; folding hides the block and protects it from edits.
   const isMarkdown = source.fileType === "md";
   const frontMatter = useMemo(() => (isMarkdown ? splitFrontMatter(content) : null), [isMarkdown, content]);
   const hideFrontMatter = !!frontMatter?.block && !workspace.frontMatterOpen;
-  const sourceText = hideFrontMatter && frontMatter ? frontMatter.body : content;
-  const onSourceChange = (value: string) => setContent(hideFrontMatter && frontMatter ? frontMatter.block + value : value);
   const frontMatterRef = useRef({ hidden: hideFrontMatter, lines: frontMatter?.lines ?? 0, body: frontMatter?.body ?? content });
   frontMatterRef.current = { hidden: hideFrontMatter, lines: frontMatter?.lines ?? 0, body: frontMatter?.body ?? content };
   const splitGroup = useRef<ImperativePanelGroupHandle>(null);
 
   const [locked, setLocked] = useState(!!source.startLocked);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // The source editor's view while it is shown, and what it leaves behind when
+  // a layout switch unmounts it (undo history, selection, scroll).
+  const viewRef = useRef<EditorView | null>(null);
+  const editorCache = useRef<SavedEditor | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef(content);
-  contentRef.current = content;
 
   // Share the live text with the Outline panel.
   useEffect(() => {
@@ -163,7 +157,6 @@ export function Editor({ source }: EditorProps) {
   // Jumps from the Outline and search results: select the line in the source
   // (when shown) and scroll the preview to the heading or matching text.
   useEffect(() => registerRevealHandler(source.uri, function reveal(target) {
-    const text = contentRef.current;
     const fm = frontMatterRef.current;
     // Lines are counted in the whole file; the preview never shows front matter.
     const bodyLine = target.line - fm.lines;
@@ -173,18 +166,16 @@ export function Editor({ source }: EditorProps) {
       setTimeout(() => reveal(target), 30);
       return;
     }
-    if (textareaRef.current) {
-      revealInTextarea(textareaRef.current, fm.hidden
-        ? lineRange(fm.body, bodyLine, target.query)
-        : lineRange(text, target.line, target.query));
-    }
+    // The editor holds the whole file, so whole-file line numbers apply.
+    const view = viewRef.current;
+    if (view) revealInEditor(view, lineRangeInDoc(view.state.doc, target.line, target.query));
     const preview = previewScrollRef.current?.querySelector<HTMLElement>("[data-preview-root]")
       ? previewScrollRef.current
       : null;
     if (!preview) return;
     if (target.heading) revealHeadingInPreview(preview, target.heading.text, target.heading.occurrence);
     else if (target.query && bodyLine >= 0) {
-      revealTextInPreview(preview, target.query, occurrencesBefore(fm.body, bodyLine, target.query), !textareaRef.current);
+      revealTextInPreview(preview, target.query, occurrencesBefore(fm.body, bodyLine, target.query), !viewRef.current);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [source.uri]);
@@ -194,23 +185,30 @@ export function Editor({ source }: EditorProps) {
   // The source pane is where matches are counted and stepped through when it
   // is visible; in preview-only layout the preview's own text is used.
   const sourceShown = isMobile || source.fileType === "text" || mode !== "preview";
+  // Matches are found in the editor's own document (editor positions), skipping
+  // folded front matter, which can't be seen or edited.
+  const matchesIn = (view: EditorView | null, query: string, matchCase: boolean): Range[] =>
+    view ? findInDoc(view.state.doc, query, matchCase, hideFrontMatter ? frontMatterEnd(view.state.doc) : 0) : [];
   const sourceMatches = useMemo(
-    () => (find.open ? findMatches(sourceText, find.query, find.matchCase) : []),
-    [find.open, sourceText, find.query, find.matchCase],
+    () => (find.open ? matchesIn(viewRef.current, find.query, find.matchCase) : []),
+    // `content` changes with every edit, so the matches follow the text.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [find.open, content, find.query, find.matchCase, hideFrontMatter],
   );
   const findTotal = sourceShown ? sourceMatches.length : previewMatchCount;
   const findIndex = findTotal ? Math.min(find.index, findTotal - 1) : -1;
 
   const firstMatchFromCaret = (query: string, matchCase: boolean) => {
-    const caret = textareaRef.current?.selectionStart ?? 0;
-    const matches = findMatches(sourceText, query, matchCase);
-    const at = matches.findIndex(([start]) => start >= caret);
+    const view = viewRef.current;
+    const caret = view?.state.selection.main.head ?? 0;
+    const at = matchesIn(view, query, matchCase).findIndex(([start]) => start >= caret);
     return at < 0 ? 0 : at;
   };
 
   const openFind = () => {
-    const ta = textareaRef.current;
-    const selected = ta && document.activeElement === ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+    const view = viewRef.current;
+    const sel = view?.state.selection.main;
+    const selected = view && sel && view.hasFocus ? view.state.sliceDoc(sel.from, sel.to) : "";
     const query = selected && selected.length <= 200 && !selected.includes("\n") ? selected : find.query;
     setFind(f => ({ ...f, open: true, query, index: firstMatchFromCaret(query, f.matchCase), focus: f.focus + 1 }));
   };
@@ -223,10 +221,10 @@ export function Editor({ source }: EditorProps) {
     setFind(f => ({ ...f, open: false }));
     clearPreviewPaint();
     // Leave the current match selected in the source, as editors do.
-    const ta = textareaRef.current;
-    if (ta && match) {
-      ta.focus({ preventScroll: true });
-      ta.setSelectionRange(match[0], match[1]);
+    const view = viewRef.current;
+    if (view && match) {
+      view.dispatch({ selection: EditorSelection.range(match[0], match[1]) });
+      view.focus();
     }
   };
 
@@ -249,10 +247,10 @@ export function Editor({ source }: EditorProps) {
   // Scroll the source to the current match (without taking focus from the find box).
   useEffect(() => {
     if (!find.open || !sourceShown) return;
-    const ta = textareaRef.current;
+    const view = viewRef.current;
     const match = sourceMatches[findIndex];
-    if (!ta || !match) return;
-    ta.scrollTop = Math.max(0, caretTop(ta, match[0]) - ta.clientHeight / 3);
+    if (!view || !match) return;
+    view.dispatch({ effects: EditorView.scrollIntoView(match[0], { y: "start", yMargin: view.scrollDOM.clientHeight / 3 }) });
   }, [find.open, sourceShown, sourceMatches, findIndex]);
 
   // Highlight matches in the preview; in preview-only layout, step through them there.
@@ -264,8 +262,13 @@ export function Editor({ source }: EditorProps) {
     }
     const ranges = previewRanges(container, find.query, find.matchCase);
     setPreviewMatchCount(ranges.length);
+    // The preview never shows front matter: when it is unfolded in the source,
+    // matches inside it have no counterpart in the preview.
+    const view = viewRef.current;
+    const fmEnd = view && !hideFrontMatter ? frontMatterEnd(view.state.doc) : 0;
+    const inFrontMatter = sourceMatches.filter(([start]) => start < fmEnd).length;
     const current = sourceShown
-      ? (sourceMatches[findIndex] ? Math.min(occurrencesBeforeOffset(sourceText, sourceMatches[findIndex][0], find.query, find.matchCase, frontMatterRef.current.hidden ? 0 : frontMatter?.block.length ?? 0), ranges.length - 1) : -1)
+      ? (sourceMatches[findIndex] && findIndex >= inFrontMatter ? Math.min(findIndex - inFrontMatter, ranges.length - 1) : -1)
       : Math.min(find.index, ranges.length - 1);
     paintPreview(ranges, current);
     const range = ranges[current];
@@ -316,7 +319,10 @@ export function Editor({ source }: EditorProps) {
       return;
     }
     if (!current.formatted) return;
-    setContent(current.formatted);
+    // Through the editor, so Ctrl+Z undoes the formatting.
+    const view = viewRef.current;
+    if (view) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: current.formatted }, userEvent: "input.format" });
+    else setContent(current.formatted);
     toast({ description: `${formatLabel} formatted successfully` });
   };
 
@@ -379,25 +385,38 @@ export function Editor({ source }: EditorProps) {
     </button>
   ) : null;
 
+  // One editor at a time is mounted (the layouts below are exclusive); they all
+  // share viewRef and the saved state, so switching layout keeps undo history.
+  const findHighlights = useMemo(
+    () => (find.open ? { ranges: sourceMatches, current: findIndex } : undefined),
+    [find.open, sourceMatches, findIndex],
+  );
+  const sourceEditor = ({ compact: tight, invalid = false, wrap = true }: { compact: boolean; invalid?: boolean; wrap?: boolean }) => (
+    <SourceEditor
+      value={content}
+      onDocChange={setContent}
+      fileType={source.fileType}
+      readOnly={readOnly}
+      wrap={wrap}
+      compact={tight}
+      placeholder={placeholder}
+      frontMatterHidden={hideFrontMatter}
+      onUnfoldFrontMatter={() => setFrontMatterOpen(true)}
+      highlights={findHighlights}
+      invalid={invalid}
+      viewRef={viewRef}
+      cache={editorCache}
+      data-testid="source-editor"
+    />
+  );
+
   const sourcePane = (
     <div className="flex-1 h-full flex flex-col min-h-0 min-w-0" data-testid="source-pane">
       <div className={paneLabelClass}>
         <span>{isStructured ? formatLabel : isDrawio ? "Draw.io XML" : isMermaid ? "Mermaid" : isHtml ? "HTML" : "Markdown"}</span>
         {frontMatterToggle}
       </div>
-      <SourceTextarea
-        ref={textareaRef}
-        highlights={find.open ? { ranges: sourceMatches, current: findIndex } : undefined}
-        className={`resize-none font-mono text-[13px] focus:outline-none bg-transparent placeholder:text-gray-200 text-gray-700 transition-colors ${
-          compact ? "px-4 py-3 md:px-5 leading-snug" : "p-6 md:p-8 leading-relaxed"
-        } ${analysis.error ? "border-l-2 border-red-500" : ""}`}
-        value={sourceText}
-        onChange={e => onSourceChange(e.target.value)}
-        readOnly={readOnly}
-        placeholder={placeholder}
-        spellCheck={false}
-        data-testid="editor-textarea"
-      />
+      {sourceEditor({ compact, invalid: !!analysis.error })}
     </div>
   );
 
@@ -569,17 +588,7 @@ export function Editor({ source }: EditorProps) {
           />
         )}
         {isPlainText ? (
-          <SourceTextarea
-            ref={textareaRef}
-            noWrap
-            highlights={find.open ? { ranges: sourceMatches, current: findIndex } : undefined}
-            className="resize-none p-5 md:p-8 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent text-gray-700"
-            value={sourceText}
-            onChange={e => onSourceChange(e.target.value)}
-            readOnly={readOnly}
-            spellCheck={false}
-            data-testid="editor-textarea"
-          />
+          sourceEditor({ compact: false, wrap: false })
         ) : !isMobile ? (
           mode === "edit" ? sourcePane
           : mode === "preview" ? previewPane
@@ -611,16 +620,7 @@ export function Editor({ source }: EditorProps) {
                 </TabsList>
               </div>
               <TabsContent value="edit" className="flex-1 p-0 m-0 data-[state=active]:flex flex-col min-h-0">
-                <SourceTextarea
-                  ref={textareaRef}
-                  highlights={find.open ? { ranges: sourceMatches, current: findIndex } : undefined}
-                  className="resize-none p-5 font-mono text-[13px] leading-relaxed focus:outline-none bg-transparent placeholder:text-gray-300 text-gray-700"
-                  value={sourceText}
-                  onChange={e => onSourceChange(e.target.value)}
-                  readOnly={readOnly}
-                  placeholder={placeholder}
-                  spellCheck={false}
-                />
+                {sourceEditor({ compact: false, invalid: !!analysis.error })}
               </TabsContent>
               <TabsContent ref={previewScrollRef} value="preview" className="flex-1 overflow-y-auto p-5 m-0 data-[state=active]:block min-h-0 bg-[#fafafa]">
                 {isHtml ? (
