@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ArrowDown, ArrowUp, CaseSensitive, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CaseSensitive, ChevronDown, ChevronRight, X } from "lucide-react";
 
 // ── Find bar ─────────────────────────────────────────────────────────────────
 
@@ -15,13 +15,28 @@ interface FindBarProps {
   onNext(): void;
   onPrevious(): void;
   onClose(): void;
+  /** Whether the replace row is open (only shown when `canReplace`). */
+  replaceOpen: boolean;
+  replacement: string;
+  /** False for read-only sources and the preview-only layout. */
+  canReplace: boolean;
+  onReplacement(value: string): void;
+  onToggleReplace(): void;
+  onReplace(): void;
+  onReplaceAll(): void;
 }
 
-/** Floating find box (Ctrl+F): Enter/F3 next, Shift+Enter/Shift+F3 previous, Esc closes. */
+/**
+ * Floating find box (Ctrl+F, or Ctrl+H with replace): Enter/F3 next,
+ * Shift+Enter/Shift+F3 previous, Esc closes. In the replace box, Enter
+ * replaces the current match and Ctrl+Alt+Enter replaces all.
+ */
 export function FindBar({
   query, matchCase, current, total, focusRequest, onQuery, onMatchCase, onNext, onPrevious, onClose,
+  replaceOpen, replacement, canReplace, onReplacement, onToggleReplace, onReplace, onReplaceAll,
 }: FindBarProps) {
   const input = useRef<HTMLInputElement>(null);
+  const showReplace = canReplace && replaceOpen;
 
   useEffect(() => {
     input.current?.focus();
@@ -32,10 +47,22 @@ export function FindBar({
 
   return (
     <div
-      className="absolute top-2 right-5 z-30 flex items-center gap-1 rounded-md border border-gray-200 bg-white pl-2 pr-1 py-1 shadow-lg"
+      className={`absolute top-2 right-5 z-30 flex flex-col gap-1 rounded-md border border-gray-200 bg-white ${canReplace ? "pl-1" : "pl-2"} pr-1 py-1 shadow-lg`}
       role="search"
       data-testid="find-bar"
     >
+      <div className="flex items-center gap-1">
+      {canReplace && (
+        <button
+          className={button}
+          onClick={onToggleReplace}
+          aria-expanded={showReplace}
+          title={showReplace ? "Hide replace" : "Replace (Ctrl+H)"}
+          data-testid="find-replace-toggle"
+        >
+          {showReplace ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+      )}
       <input
         ref={input}
         value={query}
@@ -73,6 +100,42 @@ export function FindBar({
       <button className={button} onClick={onClose} title="Close (Esc)" data-testid="find-close">
         <X className="w-3.5 h-3.5" />
       </button>
+      </div>
+      {showReplace && (
+        <div className="flex items-center gap-1 pl-7">
+          <input
+            value={replacement}
+            onChange={e => onReplacement(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.altKey) { e.preventDefault(); onReplaceAll(); }
+              else if (e.key === "Enter") { e.preventDefault(); onReplace(); }
+              if (e.key === "Escape") { e.preventDefault(); onClose(); }
+            }}
+            placeholder="Replace"
+            className="w-56 h-6 text-[13px] bg-transparent focus:outline-none"
+            aria-label="Replace with"
+            data-testid="find-replace-input"
+          />
+          <button
+            className="h-6 px-2 rounded text-[11px] font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+            onClick={onReplace}
+            disabled={!total}
+            title="Replace (Enter)"
+            data-testid="find-replace-one"
+          >
+            Replace
+          </button>
+          <button
+            className="h-6 px-2 rounded text-[11px] font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+            onClick={onReplaceAll}
+            disabled={!total}
+            title="Replace all (Ctrl+Alt+Enter)"
+            data-testid="find-replace-all"
+          >
+            Replace all
+          </button>
+        </div>
+      )}
     </div>
   );
 }

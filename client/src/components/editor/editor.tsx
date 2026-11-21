@@ -13,7 +13,7 @@ import { SaveButton } from "@/components/editor/save-button";
 import { FindBar, clearPreviewPaint, paintPreview, previewRanges } from "@/components/editor/find";
 import { SourceEditor } from "@/components/editor/source-editor";
 import type { SavedEditor } from "@/components/editor/cm/editor-state";
-import { findInDoc, type Range } from "@/components/editor/cm/find";
+import { findInDoc, replaceMatchesSpec, type Range } from "@/components/editor/cm/find";
 import { frontMatterEnd } from "@/components/editor/cm/front-matter-fold";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -180,7 +180,10 @@ export function Editor({ source }: EditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [source.uri]);
   // ── Find in document (Ctrl+F, F3 / Shift+F3) ──────────────────────────────
-  const [find, setFind] = useState({ open: false, query: "", matchCase: false, index: 0, focus: 0 });
+  const readOnly = !source.save || locked;
+  const [find, setFind] = useState({
+    open: false, query: "", matchCase: false, index: 0, focus: 0, replaceOpen: false, replacement: "",
+  });
   const [previewMatchCount, setPreviewMatchCount] = useState(0);
   // The source pane is where matches are counted and stepped through when it
   // is visible; in preview-only layout the preview's own text is used.
@@ -205,12 +208,36 @@ export function Editor({ source }: EditorProps) {
     return at < 0 ? 0 : at;
   };
 
-  const openFind = () => {
+  // Replace edits the source, so it needs an editable source on screen.
+  const canReplace = !readOnly && sourceShown;
+
+  const openFind = (withReplace = false) => {
     const view = viewRef.current;
     const sel = view?.state.selection.main;
     const selected = view && sel && view.hasFocus ? view.state.sliceDoc(sel.from, sel.to) : "";
     const query = selected && selected.length <= 200 && !selected.includes("\n") ? selected : find.query;
-    setFind(f => ({ ...f, open: true, query, index: firstMatchFromCaret(query, f.matchCase), focus: f.focus + 1 }));
+    setFind(f => ({
+      ...f, open: true, query, index: firstMatchFromCaret(query, f.matchCase), focus: f.focus + 1,
+      replaceOpen: withReplace ? canReplace : f.replaceOpen,
+    }));
+  };
+
+  const replaceCurrent = () => {
+    const view = viewRef.current;
+    const match = sourceMatches[findIndex];
+    if (!canReplace || !view || !match) return;
+    // Put the caret after the replacement, then carry on from there, so a
+    // replacement that contains the query ("a" → "aa") moves forward.
+    view.dispatch({ ...replaceMatchesSpec([match], find.replacement), selection: { anchor: match[0] + find.replacement.length } });
+    setFind(f => ({ ...f, index: firstMatchFromCaret(f.query, f.matchCase) }));
+  };
+
+  const replaceAll = () => {
+    const view = viewRef.current;
+    if (!canReplace || !view || !sourceMatches.length) return;
+    const n = sourceMatches.length;
+    view.dispatch(replaceMatchesSpec(sourceMatches, find.replacement));
+    toast({ description: `Replaced ${n} occurrence${n === 1 ? "" : "s"}` });
   };
   const stepFind = (delta: number) => {
     if (!findTotal) return;
@@ -232,9 +259,15 @@ export function Editor({ source }: EditorProps) {
   findKeys.current = { openFind, stepFind, hasQuery: !!find.query };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The find box handles its own keys (Enter, F3) and marks them handled.
+      if (e.defaultPrevented) return;
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         findKeys.current.openFind();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
+        // Also keeps the browser's History shortcut from opening.
+        e.preventDefault();
+        findKeys.current.openFind(true);
       } else if (e.key === "F3" && findKeys.current.hasQuery) {
         e.preventDefault();
         findKeys.current.stepFind(e.shiftKey ? -1 : 1);
@@ -280,7 +313,6 @@ export function Editor({ source }: EditorProps) {
   });
   useEffect(() => () => clearPreviewPaint(), []);
 
-  const readOnly = !source.save || locked;
   const unlock = () => {
     setLocked(false);
     source.onUnlock?.();
@@ -585,6 +617,13 @@ export function Editor({ source }: EditorProps) {
             onNext={() => stepFind(1)}
             onPrevious={() => stepFind(-1)}
             onClose={closeFind}
+            replaceOpen={find.replaceOpen}
+            replacement={find.replacement}
+            canReplace={canReplace}
+            onReplacement={(replacement) => setFind(f => ({ ...f, replacement }))}
+            onToggleReplace={() => setFind(f => ({ ...f, replaceOpen: !f.replaceOpen }))}
+            onReplace={replaceCurrent}
+            onReplaceAll={replaceAll}
           />
         )}
         {isPlainText ? (
