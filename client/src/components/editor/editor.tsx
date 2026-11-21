@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useDeferredValue } from "react";
 import type { ImperativePanelGroupHandle } from "react-resizable-panels";
-import { parseAllDocuments } from "yaml";
 import {
   Check, Loader2, CheckCircle2, AlertCircle, Zap, Lock, LockOpen, PenLine, Columns2, Eye, MoveHorizontal,
   FoldVertical, ChevronRight, ChevronDown,
@@ -17,6 +16,7 @@ import {
 import { useRootFolderOf } from "@/components/layout/path-actions";
 import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { splitFrontMatter } from "@/lib/markdown-source";
+import { EMPTY_ANALYSIS, analyzeJson, analyzeYaml } from "@/lib/structured";
 import { useAutosave, type Saver } from "@/hooks/use-autosave";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
@@ -49,40 +49,6 @@ export interface EditorSource {
 
 interface EditorProps {
   source: EditorSource;
-}
-
-interface Analysis {
-  /** Error message, or null when the text parses. */
-  error: string | null;
-  /** Formatted text; empty when the input is empty or invalid. */
-  formatted: string;
-}
-
-const EMPTY_ANALYSIS: Analysis = { error: null, formatted: "" };
-
-function analyzeJson(text: string): Analysis {
-  if (!text.trim()) return EMPTY_ANALYSIS;
-  try {
-    return { error: null, formatted: JSON.stringify(JSON.parse(text), null, 2) };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : "Invalid JSON", formatted: "" };
-  }
-}
-
-function analyzeYaml(text: string): Analysis {
-  if (!text.trim()) return EMPTY_ANALYSIS;
-  // parseAllDocuments handles multi-document files (separated by ---) and
-  // keeps comments, so formatting only normalises indentation and spacing.
-  const parsed = parseAllDocuments(text);
-  const docs = Array.isArray(parsed) ? parsed : [parsed];
-  const error = docs.flatMap(doc => doc.errors)[0];
-  if (error) {
-    return { error: error.message.split("\n")[0].replace(/:$/, ""), formatted: "" };
-  }
-  return {
-    error: null,
-    formatted: docs.map(doc => doc.toString({ indent: 2, lineWidth: 0 })).join(""),
-  };
 }
 
 const DOWNLOAD_TYPES = {
