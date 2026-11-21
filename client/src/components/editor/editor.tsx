@@ -146,6 +146,9 @@ export function Editor({ source }: EditorProps) {
   // a layout switch unmounts it (undo history, selection, scroll).
   const viewRef = useRef<EditorView | null>(null);
   const editorCache = useRef<SavedEditor | null>(null);
+  // Bumped when the editor mounts or unmounts (layout switches), so values
+  // computed from viewRef during render are recomputed.
+  const [viewVersion, setViewVersion] = useState(0);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Share the live text with the Outline panel.
@@ -196,7 +199,7 @@ export function Editor({ source }: EditorProps) {
     () => (find.open ? matchesIn(viewRef.current, find.query, find.matchCase) : []),
     // `content` changes with every edit, so the matches follow the text.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [find.open, content, find.query, find.matchCase, hideFrontMatter],
+    [find.open, content, find.query, find.matchCase, hideFrontMatter, viewVersion],
   );
   const findTotal = sourceShown ? sourceMatches.length : previewMatchCount;
   const findIndex = findTotal ? Math.min(find.index, findTotal - 1) : -1;
@@ -438,6 +441,7 @@ export function Editor({ source }: EditorProps) {
       invalid={invalid}
       viewRef={viewRef}
       cache={editorCache}
+      onViewChange={() => setViewVersion(v => v + 1)}
       data-testid="source-editor"
     />
   );

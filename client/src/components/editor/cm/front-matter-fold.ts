@@ -94,23 +94,43 @@ const foldAtomic = EditorView.atomicRanges.of(view => {
 });
 
 /**
- * Keeps folded front matter out of reach: any change that starts inside the
- * hidden block is moved to the start of the body, so select-all + type or
- * Backspace at the top of the body never edits (or deletes) what can't be seen.
- * Undo and redo pass through, so history stays consistent.
+ * Keeps folded front matter out of reach. A selection can only reach the
+ * hidden block from position 0 (it is atomic), so changes starting there
+ * (select-all + type or delete, typing at the very top) are moved to the
+ * start of the body. Any other change that reaches into the block comes from
+ * a command (Backspace at the top of the body, Alt+Up, transpose) and the
+ * whole transaction is dropped, so it can't half-apply. Front matter with no
+ * final line break gets one before the first text typed after it, so the
+ * closing --- line stays intact. Undo and redo pass through, so history stays
+ * consistent.
  */
 const protectFolded = EditorState.transactionFilter.of(tr => {
   if (!tr.docChanged || tr.isUserEvent("undo") || tr.isUserEvent("redo")) return tr;
-  const { hidden, end } = tr.startState.field(frontMatterField);
+  const start = tr.startState;
+  const { hidden, end } = start.field(frontMatterField);
   if (!hidden || !end) return tr;
-  let touched = false;
-  tr.changes.iterChanges((fromA) => { if (fromA < end) touched = true; });
-  if (!touched) return tr;
+  const openEnded = end === start.doc.length && start.sliceDoc(end - 1, end) !== "\n";
+  let reachesIn = false;
+  let fromTop = false;
+  let appendsToOpenEnd = false;
+  tr.changes.iterChanges((fromA, _toA, _fromB, _toB, inserted) => {
+    if (fromA === 0) fromTop = true;
+    else if (fromA < end) reachesIn = true;
+    if (openEnded && fromA === end && inserted.length) appendsToOpenEnd = true;
+  });
+  if (reachesIn) return [];
+  if (!fromTop && !appendsToOpenEnd) return tr;
   const changes: ChangeSpec[] = [];
+  let needsBreak = openEnded;
   tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
     const from = Math.max(fromA, end);
     const to = Math.max(toA, from);
-    if (from !== to || inserted.length) changes.push({ from, to, insert: inserted });
+    let insert = inserted.sliceString(0);
+    if (needsBreak && from === end && insert) {
+      insert = "\n" + insert;
+      needsBreak = false;
+    }
+    if (from !== to || insert) changes.push({ from, to, insert });
   });
   const set = tr.startState.changes(changes);
   return {

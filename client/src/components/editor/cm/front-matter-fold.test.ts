@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { EditorState, Text } from "@codemirror/state";
-import { history, undo } from "@codemirror/commands";
+import { history, moveLineUp, transposeChars, undo } from "@codemirror/commands";
 import { frontMatterEnd, frontMatterField, frontMatterFold, setFrontMatterHidden } from "./front-matter-fold";
 
 const FM = "---\ntitle: x\n---\n"; // 17 characters
@@ -34,6 +34,32 @@ test("undo of a front-matter edit still works while folded", () => {
   s = s.update({ effects: setFrontMatterHidden.of(true) }).state;
   undo({ state: s, dispatch: tr => { s = tr.state; } });
   expect(s.doc.toString()).toBe(DOC);
+});
+
+test("a compound edit reaching into the hidden block is dropped whole (Alt+Up on the first body line)", () => {
+  const doc = FM + "Body\nMore";
+  let s = EditorState.create({
+    doc,
+    selection: { anchor: 18 },
+    extensions: [history(), frontMatterFold({ initiallyHidden: true, onUnfold() {} })],
+  });
+  moveLineUp({ state: s, dispatch: tr => { s = tr.state; } });
+  expect(s.doc.toString()).toBe(doc);
+});
+
+test("transposing across the body start leaves the text alone", () => {
+  let s = EditorState.create({
+    doc: FM + "Body",
+    selection: { anchor: 17 },
+    extensions: [frontMatterFold({ initiallyHidden: true, onUnfold() {} })],
+  });
+  transposeChars({ state: s, dispatch: tr => { s = tr.state; } });
+  expect(s.doc.toString()).toBe(FM + "Body");
+});
+
+test("typing after front matter with no final line break starts a new line", () => {
+  const s = make("---\na: 1\n---");
+  expect(s.update({ changes: { from: 12, insert: "Hello" } }).state.doc.toString()).toBe("---\na: 1\n---\nHello");
 });
 
 test("nothing is protected while unfolded", () =>
