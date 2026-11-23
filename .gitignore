@@ -12,3 +12,8 @@ client/public/vendor/
 
 # Replit agent state, logs and skills (logs can contain secrets)
 .local/
+
+.serena/
+
+
+.vscode/

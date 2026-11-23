@@ -97,17 +97,17 @@ Legend: ✅ have · 🟡 partial · ❌ missing. **Priority**: P0 = required for
 | **Navigation** | Quick open (fuzzy file search) | ❌ | P0 |
 | | Command palette | ❌ | P0 |
 | | Full-text search across docs | ❌ | P1 |
-| | Find / replace in doc (regex) | ❌ (browser only) | P0 |
+| | Find / replace in doc (regex) | 🟡 find + replace (Ctrl+F, Ctrl+H); no regex or whole word yet | P0 |
 | | Outline / TOC panel, click to jump | ❌ | P0 |
 | | Back/forward navigation history | 🟡 (browser history in web only) | P1 |
 | | Keyboard-navigable explorer | ❌ | P1 |
 | | Resizable panes, toggle sidebar/preview | 🟡 | P0 |
 | | Wiki-links `[[doc]]` + backlinks | ❌ | P2 |
-| **Editor** | Syntax highlighting of markdown source | ❌ | P1 |
-| | Line numbers, soft wrap toggle, current-line highlight | ❌ | P1 |
-| | Formatting shortcuts (Ctrl+B/I/K), toolbar | ❌ | P1 |
-| | Auto-continue lists, Tab/Shift+Tab indent | ❌ | P1 |
-| | Undo that survives "Format" | ❌ (setState breaks native undo) | P1 |
+| **Editor** | Syntax highlighting of markdown source | ✅ CodeMirror 6 | P1 |
+| | Line numbers, soft wrap toggle, current-line highlight | ✅ (line numbers for non-Markdown files; plain text unwrapped) | P1 |
+| | Formatting shortcuts (Ctrl+B/I/K), toolbar | 🟡 shortcuts (Ctrl+B/I/E/K, Ctrl+Alt+0–6); no toolbar | P1 |
+| | Auto-continue lists, Tab/Shift+Tab indent | ✅ | P1 |
+| | Undo that survives "Format" | ✅ (and survives layout switches) | P1 |
 | | Paste/drag image → saved asset + link | ❌ | P2 |
 | | Table editing helpers | ❌ | P2 |
 | | Spell check toggle | ❌ (forced off) | P2 |
@@ -340,6 +340,19 @@ Done as part of a workspace round:
 - **Toolbar:** New ▾ (Markdown / JSON / YAML document, or a new file in a folder), Open Folder, Save.
 
 Still open from those tasks: Ctrl+W / Ctrl+Tab shortcuts, tab drag-to-reorder, watching for external changes (T6.4), keyboard arrow navigation in the tree (T3.6), and relative images for files (T5.7).
+
+### Progress: CodeMirror 6 editor (2026-11-21, branch `feature/codemirror-editor`)
+
+Plan: [superpowers/plans/2026-11-21-codemirror-editor.md](superpowers/plans/2026-11-21-codemirror-editor.md).
+
+- **T4.1 done.** CodeMirror 6 replaces the textarea for Markdown, JSON, YAML, HTML, draw.io XML, Mermaid and plain text. It adds syntax highlighting (fenced code languages load on demand), an active line, bracket matching, soft wrap (off for plain text), and line numbers outside Markdown. Autosave is unchanged. The file's own line endings are kept: CRLF stays CRLF.
+- **T4.2 done, except regex and whole word.** Ctrl+H adds replace and replace all to the find bar. Replace all is a single undo step. F3 in the find box now steps one match at a time (it used to step two).
+- **T4.3 done, except the toolbar.** Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+K, Ctrl+Alt+0–6 for headings, Enter continues lists, and Tab / Shift+Tab indent.
+- **T4.4 done.** JSON and YAML errors are underlined at their position, with a gutter marker. Format goes through the editor, so Ctrl+Z undoes it.
+- **P6 done.** The editor only renders the visible lines: a 1.8 MB file renders 32 lines of DOM for 80,001 lines.
+- **Folded front matter** is now hidden inside the editor, with a button to show it, instead of being cut out of the text. Edits can't reach it while it is folded.
+- **Undo history and scroll position** survive switching Edit / Split / Preview and the mobile Edit / Preview tabs.
+- **T2.6 (partial):** the editor and the Markdown preview load as their own chunk. The app's entry chunk went from 1.26 MB to 0.57 MB.
 
 ## 6. Suggested order and milestones
 

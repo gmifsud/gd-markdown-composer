@@ -76,6 +76,14 @@ interface DesktopBridge {
   takePendingFiles?(): Promise<string[]>;
   /** Called when more files are waiting to be taken; returns an unsubscribe function. Missing in older builds. */
   onFilesPending?(callback: () => void): () => void;
+  /** Runtime versions exposed by the Electron preload script. Missing in web or older builds. */
+  versions?: {
+    app?: string;
+    buildNumber?: string;
+    electron?: string;
+    chrome?: string;
+    node?: string;
+  };
 }
 
 declare global {

@@ -1,7 +1,7 @@
-import { useMemo, useRef, type ReactNode } from "react";
+import { Component, Suspense, lazy, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, FileWarning, Loader2 } from "lucide-react";
-import { Editor, type EditorSource } from "@/components/editor/editor";
+import type { EditorSource } from "@/components/editor/editor";
 import { ImageFileView } from "@/components/editor/image-view";
 import { DocxView, XlsxView } from "@/components/editor/office-view";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,54 @@ function Loading({ label }: { label: string }) {
   );
 }
 
+// The editor (CodeMirror, its languages and the Markdown preview) is its own
+// chunk, so the app shell paints without it. Loading starts as soon as a
+// document or file starts loading, in parallel with fetching its content.
+const loadEditor = () => import("@/components/editor/editor");
+const LazyEditor = lazy(() => loadEditor().then(m => ({ default: m.Editor })));
+
+/**
+ * Keeps a failed editor load (offline, or a redeploy removed the chunk an
+ * open page refers to) inside the editor area instead of unmounting the whole
+ * app. Recovery is a page reload: browsers remember a failed dynamic import,
+ * and after a redeploy only a fresh index.html knows the new chunk names.
+ * Pending saves are flushed on unload (pending-saves.ts).
+ */
+class EditorLoadBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Message icon={<FileWarning className="w-8 h-8" />} title="Couldn't open the editor">
+        <p className="mb-4">{this.state.error.message || "The editor failed to load."}</p>
+        <Button size="sm" variant="secondary" onClick={() => window.location.reload()} data-testid="button-retry-editor">
+          Reload
+        </Button>
+      </Message>
+    );
+  }
+}
+
+function Editor({ source }: { source: EditorSource }) {
+  return (
+    <EditorLoadBoundary>
+      <Suspense fallback={<Loading label="Loading editor..." />}>
+        <LazyEditor source={source} />
+      </Suspense>
+    </EditorLoadBoundary>
+  );
+}
+
+function usePreloadEditor() {
+  // Only a head start: a failure here shows up (with Retry) when the editor renders.
+  useEffect(() => { loadEditor().catch(() => {}); }, []);
+}
+
 function Message({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-gray-50/50">
@@ -38,6 +86,7 @@ function Message({ icon, title, children }: { icon: ReactNode; title: string; ch
 export function DocumentEditor({ id }: { id: number }) {
   const { data: doc, isLoading } = useDocument(id);
   const queryClient = useQueryClient();
+  usePreloadEditor();
 
   const source = useMemo<EditorSource | null>(() => {
     if (!doc) return null;
@@ -82,6 +131,7 @@ export function FileEditor({ path, uri }: { path: string; uri: string }) {
 function TextFileEditor({ path, uri }: { path: string; uri: string }) {
   const queryClient = useQueryClient();
   const { close } = useWorkspaceActions();
+  usePreloadEditor();
   // Always read fresh from disk when a file tab is shown again.
   const { data, isLoading, error } = useQuery({
     queryKey: fsKeys.file(path),
