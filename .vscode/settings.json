@@ -14,5 +14,10 @@
   "git.showProgress": false,
   "gitlens.views.branches.avatars": false,
   "scm.autoReveal": false,
-  "scm.diffDecorationsGutterAction": "none"
+  "files.watcherExclude": {
+    "**/electron-dist/**": true
+  },
+  "search.exclude": {
+    "**/electron-dist/**": true
+  }
 }

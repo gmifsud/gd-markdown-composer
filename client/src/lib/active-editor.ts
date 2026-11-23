@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { FileKind } from "@shared/fs";
 
 /**
  * Shared state of the editor that is currently shown: its live (possibly
@@ -9,7 +10,7 @@ import { useSyncExternalStore } from "react";
 export interface ActiveEditorInfo {
   /** Tab URI (db:<id> or file:<path>). */
   uri: string;
-  fileType: "md" | "json" | "yaml" | "drawio" | "html" | "text";
+  fileType: FileKind;
   title: string;
   content: string;
 }
