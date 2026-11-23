@@ -1,11 +1,13 @@
 import type { Express, NextFunction, Request, Response } from "express";
-import { promises as fsp } from "fs";
+import { constants as fsConstants, promises as fsp } from "fs";
+import { randomBytes } from "crypto";
 import os from "os";
 import path from "path";
+import { readWorkbook } from "./office";
 import {
-  FS_CLIENT_HEADER,
-  type FsCreateRequest, type FsEntry, type FsListResponse, type FsReadResponse,
-  type FsSearchRequest, type FsSearchResponse, type FsSearchResult,
+  FS_CLIENT_HEADER, IMAGE_TYPES, extensionOf,
+  type FsCreateRequest, type FsEntry, type FsListResponse, type FsMoveRequest, type FsMoveResponse,
+  type FsReadResponse, type FsSearchRequest, type FsSearchResponse, type FsSearchResult,
   type FsStatus, type FsWriteRequest, type FsWriteResponse,
 } from "@shared/fs";
 
@@ -13,6 +15,13 @@ const MAX_READ_BYTES = 20 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 const HIDDEN_ENTRIES = new Set([".git", ".DS_Store", "Thumbs.db"]);
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const CASE_INSENSITIVE_FS = process.platform === "win32" || process.platform === "darwin";
+
+// Image URLs (used by <img>, which can't send headers) carry this token instead.
+const IMAGE_TOKEN = randomBytes(24).toString("hex");
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+const NAME_INDEX_TTL_MS = 60_000;
+const NAME_INDEX_MAX_ENTRIES = 200_000;
 
 // Search limits: big vaults (thousands of files in dot-folders) must not stall the app.
 const SEARCH_SKIP_DIRS = new Set(["node_modules"]);
@@ -41,12 +50,16 @@ class HttpError extends Error {
   }
 }
 
+function isLocalRequest(req: Request) {
+  const remote = req.socket.remoteAddress ?? "";
+  const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  return LOOPBACK_ADDRESSES.has(remote) && LOOPBACK_HOSTNAMES.has(hostname);
+}
+
 // Requests must come from this machine, name a loopback host (blocks DNS
 // rebinding) and carry the client header (blocks cross-site simple requests).
 export function localOnlyGuard(req: Request, res: Response, next: NextFunction) {
-  const remote = req.socket.remoteAddress ?? "";
-  const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
-  if (!LOOPBACK_ADDRESSES.has(remote) || !LOOPBACK_HOSTNAMES.has(hostname)) {
+  if (!isLocalRequest(req)) {
     return res.status(403).json({ message: "Folder access is only available on this computer" });
   }
   if (req.get(FS_CLIENT_HEADER) !== "1") {
@@ -67,6 +80,7 @@ function fsError(err: unknown): HttpError {
   const code = (err as NodeJS.ErrnoException)?.code;
   if (code === "ENOENT") return new HttpError(404, "Not found");
   if (code === "EACCES" || code === "EPERM") return new HttpError(403, "Permission denied");
+  if (code === "EBUSY") return new HttpError(423, "The file is in use by another program");
   if (code === "ENOTDIR") return new HttpError(400, "Not a folder");
   if (code === "EISDIR") return new HttpError(400, "Not a file");
   return new HttpError(500, (err as Error)?.message ?? "File system error");
@@ -99,6 +113,30 @@ async function atomicWrite(filePath: string, content: string) {
       return;
     }
     throw err;
+  }
+}
+
+/** Same path, allowing for case-insensitive file systems (Windows, macOS). */
+function samePath(a: string, b: string) {
+  return CASE_INSENSITIVE_FS ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** Renames `from` to `to`; across drives (where rename can't work) it copies, then deletes the original. */
+async function moveFile(from: string, to: string) {
+  try {
+    await fsp.rename(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    const { atime, mtime } = await fsp.stat(from);
+    // COPYFILE_EXCL: never overwrite a file that appeared since the name was checked.
+    await fsp.copyFile(from, to, fsConstants.COPYFILE_EXCL);
+    try {
+      await fsp.utimes(to, atime, mtime);
+      await fsp.unlink(from);
+    } catch (cleanupErr) {
+      await fsp.rm(to, { force: true });
+      throw cleanupErr;
+    }
   }
 }
 
@@ -206,13 +244,74 @@ async function searchFolders(request: FsSearchRequest, isAborted: () => boolean)
   return { results: results.slice(0, SEARCH_MAX_RESULTS), truncated, scannedFiles, elapsedMs: Date.now() - started };
 }
 
+// ── Image lookup ────────────────────────────────────────────────────────────
+
+const exists = (p: string) => fsp.stat(p).then(s => s.isFile(), () => false);
+
+/** Lower-case file name → paths, per workspace folder, for Obsidian-style ![[name.png]] lookups. */
+const nameIndexes = new Map<string, { built: number; index: Promise<Map<string, string[]>> }>();
+
+function nameIndex(root: string) {
+  const cached = nameIndexes.get(root);
+  if (cached && Date.now() - cached.built < NAME_INDEX_TTL_MS) return cached.index;
+  const index = (async () => {
+    const byName = new Map<string, string[]>();
+    const stack = [root];
+    let entries = 0;
+    while (stack.length && entries < NAME_INDEX_MAX_ENTRIES) {
+      const dir = stack.pop()!;
+      const dirents = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const d of dirents) {
+        if (HIDDEN_ENTRIES.has(d.name) || SEARCH_SKIP_DIRS.has(d.name)) continue;
+        entries++;
+        const full = path.join(dir, d.name);
+        if (d.isDirectory()) stack.push(full);
+        else if (d.isFile() && extensionOf(d.name) in IMAGE_TYPES) {
+          const key = d.name.toLowerCase();
+          byName.set(key, [...(byName.get(key) ?? []), full]);
+        }
+      }
+    }
+    return byName;
+  })();
+  nameIndexes.set(root, { built: Date.now(), index });
+  return index;
+}
+
+/**
+ * Finds the file an image reference in a Markdown document points at:
+ * relative to the document, relative to its workspace folder (vault root), or —
+ * like Obsidian — any file with that name in the workspace folder.
+ */
+async function resolveImage(doc: string, root: string | null, target: string): Promise<string | null> {
+  let ref = target.trim().replace(/^<|>$/g, "");
+  try { ref = decodeURIComponent(ref); } catch { /* keep as written */ }
+  ref = ref.split(/[?#]/)[0];
+  if (!ref) return null;
+
+  const docDir = path.dirname(doc);
+  const base = root ?? docDir;
+  const candidates = path.isAbsolute(ref) && !/^[\\/]/.test(ref)
+    ? [ref]
+    : ref.startsWith("/")
+      ? [path.join(base, ref)]
+      : [path.resolve(docDir, ref), path.resolve(base, ref)];
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  const matches = (await nameIndex(base)).get(path.basename(ref).toLowerCase());
+  // Prefer the match closest to the document (shortest path).
+  return matches?.sort((a, b) => a.length - b.length)[0] ?? null;
+}
+
 export function registerFsRoutes(app: Express) {
   app.get("/api/fs/status", (_req, res) => {
     const status: FsStatus = {
       enabled: isFsAccessEnabled(),
       home: os.homedir(),
       sep: path.sep as FsStatus["sep"],
-      caseInsensitive: process.platform === "win32" || process.platform === "darwin",
+      caseInsensitive: CASE_INSENSITIVE_FS,
+      imageToken: isFsAccessEnabled() && isLocalRequest(_req) ? IMAGE_TOKEN : "",
     };
     res.json(status);
   });
@@ -224,18 +323,55 @@ export function registerFsRoutes(app: Express) {
     return;
   }
 
+  // Images for <img> tags: ?path=<file>, or ?doc=<markdown file>&root=<folder>&target=<reference>.
+  // Registered before the header guard because <img> can't send headers; the token stands in.
+  app.get("/api/fs/image", handle(async (req, res) => {
+    if (!isLocalRequest(req) || req.query.token !== IMAGE_TOKEN) throw new HttpError(403, "Forbidden");
+    const filePath = typeof req.query.path === "string"
+      ? absolutePath(req.query.path)
+      : await resolveImage(
+          absolutePath(req.query.doc),
+          typeof req.query.root === "string" && req.query.root ? absolutePath(req.query.root) : null,
+          String(req.query.target ?? ""),
+        );
+    if (!filePath) throw new HttpError(404, "Image not found");
+    const type = IMAGE_TYPES[extensionOf(filePath)];
+    if (!type) throw new HttpError(415, "Not an image");
+    const stat = await fsp.stat(filePath);
+    if (stat.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is too large");
+    await new Promise<void>((resolve, reject) => {
+      res.sendFile(filePath, {
+        dotfiles: "allow",
+        headers: {
+          "Content-Type": type,
+          "Cache-Control": "no-cache",
+          "X-Content-Type-Options": "nosniff",
+          // SVGs opened directly can't run scripts.
+          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        },
+      }, err => (err ? reject(err) : resolve()));
+    });
+  }));
+
   app.use("/api/fs", localOnlyGuard);
 
   app.get("/api/fs/list", handle(async (req, res) => {
     const dir = absolutePath(req.query.path);
+    // The folder picker only needs folders; skipping files saves a stat per file in big folders.
+    const foldersOnly = req.query.folders === "1";
     const dirents = await fsp.readdir(dir, { withFileTypes: true });
     const listed = await Promise.all(dirents.map(async (d): Promise<FsEntry | null> => {
       if (HIDDEN_ENTRIES.has(d.name)) return null;
       if (!d.isDirectory() && !d.isFile() && !d.isSymbolicLink()) return null; // sockets, devices, etc.
       const full = path.join(dir, d.name);
+      if (foldersOnly) {
+        if (d.isDirectory()) return { name: d.name, path: full, kind: "directory", mtimeMs: 0 };
+        if (d.isFile()) return null;
+      }
       // stat follows symlinks, so a link to a folder lists as a folder.
       const stat = await fsp.stat(full).catch(() => null);
       const isDir = stat ? stat.isDirectory() : d.isDirectory();
+      if (foldersOnly && !isDir) return null;
       return { name: d.name, path: full, kind: isDir ? "directory" : "file", mtimeMs: stat?.mtimeMs ?? 0 };
     }));
     const entries = listed.filter((e): e is FsEntry => e !== null);
@@ -259,6 +395,30 @@ export function registerFsRoutes(app: Express) {
     res.on("close", () => { if (!res.writableEnded) aborted = true; });
     const result = await searchFolders({ roots, query, contents: !!body.contents }, () => aborted);
     if (!aborted) res.json(result);
+  }));
+
+  // Raw bytes of a file (Word documents are rendered in the page).
+  app.get("/api/fs/raw", handle(async (req, res) => {
+    const filePath = absolutePath(req.query.path);
+    const stat = await fsp.stat(filePath);
+    if (stat.isDirectory()) throw new HttpError(400, "Not a file");
+    if (stat.size > MAX_IMAGE_BYTES) throw new HttpError(413, "File is too large");
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.send(await fsp.readFile(filePath));
+  }));
+
+  // Spreadsheets as JSON (read with ExcelJS).
+  app.get("/api/fs/xlsx", handle(async (req, res) => {
+    const filePath = absolutePath(req.query.path);
+    if (!/\.(xlsx|xlsm)$/i.test(filePath)) throw new HttpError(415, "Only .xlsx and .xlsm workbooks can be read");
+    const stat = await fsp.stat(filePath);
+    if (stat.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Workbook is too large");
+    try {
+      res.json(await readWorkbook(filePath));
+    } catch (err) {
+      throw new HttpError(422, `Couldn't read this workbook: ${(err as Error).message}`);
+    }
   }));
 
   app.get("/api/fs/read", handle(async (req, res) => {
@@ -306,5 +466,27 @@ export function registerFsRoutes(app: Express) {
     const stat = await fsp.stat(filePath);
     const body: FsWriteResponse = { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs };
     res.status(201).json(body);
+  }));
+
+  // Moves a file into another folder, keeping its name. Never overwrites: a name clash is a 409.
+  app.post("/api/fs/move", handle(async (req, res) => {
+    const from = absolutePath((req.body as Partial<FsMoveRequest>)?.from);
+    const toDirectory = absolutePath((req.body as Partial<FsMoveRequest>)?.toDirectory);
+
+    if (!(await fsp.stat(from)).isFile()) throw new HttpError(400, "Only files can be moved");
+    if (!(await fsp.stat(toDirectory)).isDirectory()) throw new HttpError(400, "Choose a folder to move the file into");
+
+    const name = path.basename(from);
+    const target = path.join(toDirectory, name);
+    if (samePath(target, from)) throw new HttpError(400, "The file is already in that folder");
+    if (await fsp.lstat(target).then(() => true, () => false)) {
+      throw new HttpError(409, `"${name}" already exists in that folder`);
+    }
+
+    await moveFile(from, target);
+    // Image lookups by name (Obsidian-style) are cached per folder; a moved image changes them.
+    if (extensionOf(name) in IMAGE_TYPES) nameIndexes.clear();
+    const body: FsMoveResponse = { from, path: target };
+    res.json(body);
   }));
 }

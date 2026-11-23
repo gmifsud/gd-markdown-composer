@@ -4,6 +4,7 @@ import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { PathMenuItems } from "@/components/layout/path-actions";
+import { MoveMenuItem } from "@/components/layout/move-file-context";
 import { requestReveal } from "@/lib/active-editor";
 import { relativePath } from "@/lib/fs-api";
 import { fileUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
@@ -43,6 +44,11 @@ export function useExplorerSearch() {
 /** Opens the explorer and focuses its search box with "Contents" turned on. */
 export function focusExplorerSearch(contents: boolean) {
   setSearchState({ contents, focusRequest: searchState.focusRequest + 1 });
+}
+
+/** Whether a search is filtering the explorer. Read directly, so callers needn't re-render on every keystroke. */
+export function isExplorerSearching() {
+  return searchState.query.trim() !== "";
 }
 
 // ── Search box ───────────────────────────────────────────────────────────────
@@ -242,6 +248,7 @@ function FilteredNode({ node, root, depth, query, fileIcon }: {
           {!isDir && (
             <>
               <ContextMenuItem onSelect={() => openAt(result?.lines[0]?.line)}>Open</ContextMenuItem>
+              <MoveMenuItem path={node.path} />
               <ContextMenuSeparator />
             </>
           )}

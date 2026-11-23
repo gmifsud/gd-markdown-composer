@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Files, Library, ListTree } from "lucide-react";
 import { FolderExplorer } from "@/components/layout/folder-explorer";
 import { DocumentsPanel } from "@/components/layout/documents-panel";
@@ -64,22 +64,37 @@ export function WorkbenchSidebar() {
   const { state } = useWorkspace();
   const { setSidebar } = useWorkspaceActions();
   const { visible, width, panel } = state.sidebar;
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const drag = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
+  // While dragging, the width lives here and is saved to the workspace once on
+  // release: saving on every pointer move re-rendered the whole explorer tree
+  // and rewrote localStorage dozens of times a second.
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  // Same element between renders, so a drag re-renders only this frame, not the panel.
+  const content = useMemo(
+    () => (panel === "explorer" ? <FolderExplorer /> : panel === "documents" ? <DocumentsPanel /> : <OutlinePanel />),
+    [panel],
+  );
 
   if (!visible) return null;
 
+  const shownWidth = dragWidth ?? width;
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { startX: e.clientX, startWidth: width };
+    drag.current = { startX: e.clientX, startWidth: width, width };
     document.body.style.cursor = "col-resize";
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     if (!drag.current) return;
-    setSidebar({ width: drag.current.startWidth + e.clientX - drag.current.startX });
+    const next = Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH,
+      drag.current.startWidth + e.clientX - drag.current.startX)));
+    drag.current.width = next;
+    setDragWidth(next);
   };
   const endDrag = () => {
+    if (drag.current && drag.current.width !== width) setSidebar({ width: drag.current.width });
     drag.current = null;
+    setDragWidth(null);
     document.body.style.cursor = "";
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -89,15 +104,15 @@ export function WorkbenchSidebar() {
   };
 
   return (
-    <div className="relative h-full shrink-0 border-r border-[#252526]" style={{ width }} data-testid="sidebar">
-      {panel === "explorer" ? <FolderExplorer /> : panel === "documents" ? <DocumentsPanel /> : <OutlinePanel />}
+    <div className="relative h-full shrink-0 border-r border-[#252526]" style={{ width: shownWidth }} data-testid="sidebar">
+      {content}
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize sidebar"
         aria-valuemin={SIDEBAR_MIN_WIDTH}
         aria-valuemax={SIDEBAR_MAX_WIDTH}
-        aria-valuenow={width}
+        aria-valuenow={shownWidth}
         tabIndex={0}
         className="absolute top-0 -right-[3px] z-20 h-full w-[6px] cursor-col-resize hover:bg-[#007fd4]/60 focus-visible:bg-[#007fd4] focus:outline-none transition-colors"
         onPointerDown={onPointerDown}

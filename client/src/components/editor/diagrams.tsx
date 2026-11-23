@@ -54,7 +54,27 @@ function DiagramError({ title, children }: { title: string; children: ReactNode 
 type Mermaid = (typeof import("mermaid"))["default"];
 let mermaidLoader: Promise<Mermaid> | null = null;
 let mermaidCounter = 0;
+
+// Rendered SVGs by source. Every pause while typing renders a new variant, so
+// the cache is bounded: a Map keeps insertion order, which makes it an LRU
+// (re-insert on hit, evict the first key when full).
+const MERMAID_CACHE_LIMIT = 64;
 const mermaidCache = new Map<string, string>();
+
+function cachedSvg(code: string) {
+  const svg = mermaidCache.get(code);
+  if (svg !== undefined) {
+    mermaidCache.delete(code);
+    mermaidCache.set(code, svg);
+  }
+  return svg;
+}
+
+function cacheSvg(code: string, svg: string) {
+  mermaidCache.delete(code);
+  mermaidCache.set(code, svg);
+  if (mermaidCache.size > MERMAID_CACHE_LIMIT) mermaidCache.delete(mermaidCache.keys().next().value!);
+}
 
 function loadMermaid() {
   mermaidLoader ??= import("mermaid").then(({ default: mermaid }) => {
@@ -65,23 +85,50 @@ function loadMermaid() {
   return mermaidLoader;
 }
 
+// Mermaid sizes every label box from text it measures while rendering. If the
+// label font (Inter) is still downloading at that moment, the boxes are sized
+// for the narrower fallback font and the labels are clipped once Inter
+// arrives. So rendering waits for the font first, but never for long: offline
+// there is no font to wait for and the fallback is measured and drawn alike.
+const FONT_WAIT_MS = 3000;
+let labelFontReady: Promise<void> | null = null;
+
+function waitForLabelFont(): Promise<void> {
+  // Memoised with its time limit, so a font request that hangs costs one wait, not one per diagram.
+  labelFontReady ??= Promise.race([(async () => {
+    // The font stylesheet loads without blocking the page; wait for it so the
+    // @font-face rules exist before asking for the font.
+    const link = document.querySelector<HTMLLinkElement>('link[rel="stylesheet"][href*="fonts.googleapis.com"]');
+    if (link && !link.sheet) {
+      await new Promise<void>(resolve => {
+        link.addEventListener("load", () => resolve(), { once: true });
+        link.addEventListener("error", () => resolve(), { once: true });
+      });
+    }
+    await document.fonts.load("16px Inter");
+    await document.fonts.ready;
+  })().catch(() => undefined), new Promise<void>(resolve => setTimeout(resolve, FONT_WAIT_MS))]);
+  return labelFontReady;
+}
+
 function MermaidDiagram({ code }: { code: string }) {
-  const [svg, setSvg] = useState(() => mermaidCache.get(code) ?? null);
+  const [svg, setSvg] = useState(() => cachedSvg(code) ?? null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const cached = mermaidCache.get(code);
+    const cached = cachedSvg(code);
     if (cached) {
       setSvg(cached);
       setError(null);
       return;
     }
-    void loadMermaid().then(async mermaid => {
+    void Promise.all([loadMermaid(), waitForLabelFont()]).then(async ([mermaid]) => {
+      if (cancelled) return;
       const id = `mdc-mermaid-${++mermaidCounter}`;
       try {
         const result = await mermaid.render(id, code);
-        mermaidCache.set(code, result.svg);
+        cacheSvg(code, result.svg);
         if (!cancelled) { setSvg(result.svg); setError(null); }
       } catch (err) {
         // Keep the last good drawing while the diagram is being edited.
@@ -111,6 +158,20 @@ function MermaidDiagram({ code }: { code: string }) {
       ) : !error && <Pending label="Rendering Mermaid diagram…" />}
       {error && <DiagramError title="Mermaid error">{error}</DiagramError>}
     </>
+  );
+}
+
+/** A whole .mermaid / .mmd file: the diagram fills the pane and re-renders as the source is edited. */
+export function MermaidFileView({ code }: { code: string }) {
+  // Files saved on Windows often have CRLF line endings and a BOM.
+  const source = code.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  const debounced = useDebounce(source, RENDER_DELAY_MS);
+  return (
+    <div className="h-full overflow-auto rounded-lg border border-gray-200 bg-white p-4" data-diagram="mermaid" data-testid="mermaid-file-view">
+      {debounced
+        ? <MermaidDiagram code={debounced} />
+        : <p className="py-6 text-center text-[12px] text-gray-400">This file is empty. Write a Mermaid diagram in the source pane.</p>}
+    </div>
   );
 }
 

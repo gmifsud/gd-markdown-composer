@@ -1,4 +1,26 @@
 // Scrolling helpers for "jump to" from the Outline and search results.
+import { EditorSelection, type Text } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import type { Range } from "@/components/editor/cm/find";
+
+/** Editor range of `line` (0-based, clamped), narrowed to the first case-insensitive match of `query` on it. */
+export function lineRangeInDoc(doc: Text, line: number, query?: string): Range {
+  const { from, to, text } = doc.line(Math.max(1, Math.min(line + 1, doc.lines)));
+  if (query) {
+    const at = text.toLowerCase().indexOf(query.toLowerCase());
+    if (at >= 0) return [from + at, from + at + query.length];
+  }
+  return [from, to];
+}
+
+/** Selects a range in the source editor and scrolls it to about a third of the way down. */
+export function revealInEditor(view: EditorView, [from, to]: Range, opts: { focus?: boolean } = {}) {
+  view.dispatch({
+    selection: EditorSelection.range(from, to),
+    effects: EditorView.scrollIntoView(from, { y: "start", yMargin: view.scrollDOM.clientHeight / 3 }),
+  });
+  if (opts.focus !== false) view.focus();
+}
 
 /** Character range of `line` (0-based), narrowed to the first match of `query` on it if given. */
 export function lineRange(content: string, line: number, query?: string): [number, number] {
@@ -15,43 +37,6 @@ export function lineRange(content: string, line: number, query?: string): [numbe
     if (at >= 0) return [start + at, start + at + query.length];
   }
   return [start, end];
-}
-
-const MIRRORED_STYLES = [
-  "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "tabSize",
-  "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-] as const;
-
-/** Pixel offset of character `offset` inside a textarea, accounting for soft wrapping. */
-function caretTop(ta: HTMLTextAreaElement, offset: number) {
-  const style = getComputedStyle(ta);
-  const mirror = document.createElement("div");
-  for (const prop of MIRRORED_STYLES) mirror.style[prop] = style[prop];
-  Object.assign(mirror.style, {
-    position: "absolute",
-    visibility: "hidden",
-    top: "0",
-    left: "-99999px",
-    boxSizing: "border-box",
-    width: `${ta.clientWidth}px`,
-    whiteSpace: ta.getAttribute("wrap") === "off" ? "pre" : "pre-wrap",
-    overflowWrap: "break-word",
-  });
-  mirror.textContent = ta.value.slice(0, offset);
-  const marker = document.createElement("span");
-  marker.textContent = "​";
-  mirror.appendChild(marker);
-  document.body.appendChild(mirror);
-  const top = marker.offsetTop;
-  mirror.remove();
-  return top;
-}
-
-/** Selects a range in the source textarea and scrolls it to about a third of the way down. */
-export function revealInTextarea(ta: HTMLTextAreaElement, [start, end]: [number, number]) {
-  ta.focus({ preventScroll: true });
-  ta.setSelectionRange(start, end);
-  ta.scrollTop = Math.max(0, caretTop(ta, start) - ta.clientHeight / 3);
 }
 
 function scrollIntoContainer(container: HTMLElement, rect: DOMRect) {
@@ -85,7 +70,10 @@ export function revealHeadingInPreview(container: HTMLElement, text: string, occ
  */
 export function revealTextInPreview(container: HTMLElement, query: string, occurrence: number, select: boolean) {
   const needle = query.toLowerCase();
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  // The Properties card shows front matter, which isn't part of the counted body text.
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest("[data-front-matter]") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
   let seen = 0;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = (node.nodeValue ?? "").toLowerCase();

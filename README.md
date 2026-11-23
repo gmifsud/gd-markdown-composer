@@ -10,6 +10,10 @@ A web-based document editor with support for **Markdown**, **JSON**, and **YAML*
 - **VSCode-style explorer** — collapsible sidebar with documents grouped by type, inline create/delete, and open-folder support
 - **Horizontal tabs** — pinnable tabs with right-click context menu; pin state persists across sessions
 - **Open Folder** — browse a local folder in the explorer and import `.md`, `.json`, `.yaml` files into the editor with one click (requires Chrome or Edge)
+- **Explorer groups** — organise folders (workspace folders or any folder inside one) into named, collapsible groups by drag and drop or right-click › Move to Group; each group's eye switch hides its files' tabs from the tab bar (the active tab always stays visible, and a "hidden" chip brings them back)
+- **Diagram files** — `.mermaid` / `.mmd` files open with a rendered diagram (source, split or diagram-only), like `.drawio` files
+- **Code blocks** — click into a block and press Ctrl/Cmd+A to select just that block, or use its Select all / Copy buttons
+- **Open from the OS (desktop)** — the installer registers `.md`, `.markdown`, `.mermaid` and `.mmd`; double-clicking a file (or "Open with") opens it in a tab, in the already-running window if there is one
 - **Auto-save** — changes are debounced and saved automatically to the database
 - **Save As** — download the current document as a local file in its native format
 - **Responsive** — full desktop layout (activity bar + explorer + tabs) and a mobile layout with a slide-out sheet menu

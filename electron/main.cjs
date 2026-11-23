@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const pkg = require('../package.json');
 
 // In a packaged build app.isPackaged === true.
 // In dev (node electron/main.cjs) it is false.
@@ -32,6 +33,60 @@ const CLOSE_FLUSH_TIMEOUT_MS = 3000;
 let mainWindow = null;
 let serverProcess = null;
 let serverPort = isPacked ? PACKED_PREFERRED_PORT : DEV_PORT;
+
+// ── Files opened from the OS (double-click, "Open with", drag onto the icon) ─
+// Paths wait here until the page takes them (pull model: the page drains the
+// queue when it mounts and whenever it is told new paths arrived), so a path
+// that arrives before the page is ready is never lost.
+const pendingFiles = [];
+
+/** Existing files named on a command line, resolved against `cwd`. */
+function filesFromArgv(argv, cwd) {
+  const files = [];
+  // argv[0] is the executable. Chromium can insert switches anywhere, and in
+  // dev the main script itself is an argument, so filter rather than slice.
+  for (const arg of argv.slice(1)) {
+    if (!arg || arg.startsWith('-')) continue;
+    const full = path.resolve(cwd, arg);
+    if (full === __filename) continue;
+    try {
+      if (fs.statSync(full).isFile()) files.push(full);
+    } catch {
+      // Not a path to an existing file.
+    }
+  }
+  return files;
+}
+
+function queueFiles(files) {
+  if (files.length === 0) return;
+  pendingFiles.push(...files);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('mdc:files-pending');
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+// One running app: a second launch (double-clicking another file) hands its
+// files to this instance and exits. Without this, each launch started its own
+// window and server on a different port, so it also lost the open tabs and
+// folders (localStorage belongs to the page origin, which includes the port).
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv, workingDirectory) => {
+    queueFiles(filesFromArgv(argv, workingDirectory));
+    if (!mainWindow && app.isReady()) createWindow();
+  });
+  // macOS delivers files through this event (also before 'ready').
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    queueFiles([filePath]);
+  });
+  queueFiles(filesFromArgv(process.argv, process.cwd()));
+}
 
 // ── Poll localhost until the Express server responds (dev only) ──────────────
 function waitForServer(port, attempts = 40, interval = 500) {
@@ -296,6 +351,9 @@ async function createWindow() {
   // to ::1 first on some systems.
   const appOrigin = isPacked ? `http://127.0.0.1:${serverPort}` : `http://localhost:${serverPort}`;
 
+  const appBuildNumber = String(process.env.BUILD_NUMBER || pkg.buildNumber || '');
+  const appFullVersion = appBuildNumber ? `${app.getVersion()}.${appBuildNumber}` : app.getVersion();
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -306,6 +364,10 @@ async function createWindow() {
       contextIsolation: true,
       sandbox: true,
       preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: [
+        `--mdc-app-version=${appFullVersion}`,
+        `--mdc-build-number=${appBuildNumber}`,
+      ],
     },
     title: 'GD Markdown Composer',
     icon: path.join(__dirname, 'icons', 'icon-256.png'),
@@ -372,6 +434,17 @@ ipcMain.handle('mdc:pick-folders', async (event) => {
   return result.canceled ? [] : result.filePaths;
 });
 
+ipcMain.handle('mdc:take-pending-files', () => pendingFiles.splice(0));
+
+// Only documents: opening an arbitrary path could run a program.
+const OPENABLE_EXTENSIONS = new Set(['.docx', '.doc', '.xlsx', '.xlsm', '.xls', '.pptx', '.pdf', '.csv']);
+
+ipcMain.handle('mdc:open-path', async (_event, targetPath) => {
+  if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath)) return 'Invalid path';
+  if (!OPENABLE_EXTENSIONS.has(path.extname(targetPath).toLowerCase())) return 'Not an openable document';
+  return shell.openPath(targetPath);
+});
+
 ipcMain.handle('mdc:reveal-path', (_event, targetPath) => {
   if (typeof targetPath === 'string' && path.isAbsolute(targetPath)) {
     shell.showItemInFolder(targetPath);
@@ -379,7 +452,7 @@ ipcMain.handle('mdc:reveal-path', (_event, targetPath) => {
 });
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
-app.whenReady().then(createWindow);
+if (isPrimaryInstance) app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

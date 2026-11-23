@@ -1,10 +1,11 @@
+extends: file:electron/build-version.cjs
 appId: com.markdowneditor.app
 productName: GD Markdown Composer
 
 # Electron entry point: "main" in package.json (electron/main.cjs)
 
 directories:
-  output: electron-dist
+  output: electron-dist/${buildVersion}
 
 # Files to include in the packaged app
 files:
@@ -12,6 +13,9 @@ files:
   - electron/main.cjs
   - electron/preload.cjs
   - electron/icons/icon-256.png
+  # The server (dist/index.js) and the page are fully bundled, so the app needs
+  # no node_modules at runtime; leaving them out keeps the install small.
+  - "!node_modules/**/*"
   - package.json
 
 asar: true
@@ -20,6 +24,19 @@ asar: true
 # files from inside app.asar, so dist/ ships unpacked next to it.
 asarUnpack:
   - dist/**/*
+
+# Registers the app as an "Open with" handler (and lets it be chosen as the
+# default) for these types. The path arrives in argv / 'open-file' and is
+# opened by electron/main.cjs.
+fileAssociations:
+  - ext: [md, markdown]
+    name: Markdown Document
+    description: Markdown document
+    role: Editor
+  - ext: [mermaid, mmd]
+    name: Mermaid Diagram
+    description: Mermaid diagram
+    role: Editor
 
 # PlantUML jar (run with the user's Java), fetched by script/fetch-vendor.mjs.
 extraResources:
@@ -34,6 +51,7 @@ extraResources:
 
 # macOS
 mac:
+  artifactName: "${productName}-${buildVersion}-${arch}.${ext}"
   category: public.app-category.productivity
   icon: electron/icons/icon.png
   extraResources:
@@ -48,6 +66,7 @@ mac:
 
 # Windows
 win:
+  artifactName: "${productName} Setup ${buildVersion}.${ext}"
   icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-windows-${arch}/"
@@ -60,6 +79,7 @@ win:
 
 # Linux
 linux:
+  artifactName: "${productName}-${buildVersion}-${arch}.${ext}"
   icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-linux-${arch}/"

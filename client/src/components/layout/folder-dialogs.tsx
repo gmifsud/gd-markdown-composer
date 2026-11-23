@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Folder, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { desktop, fsApi, fsKeys, useFsStatus, baseName, FsConflictError } from "@/lib/fs-api";
-import { fileUri, useWorkspaceActions } from "@/lib/workspace";
+import { fileUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 import { markUnlocked } from "@/lib/unlocked-files";
 
 interface FolderDialogsValue {
@@ -14,7 +14,13 @@ interface FolderDialogsValue {
   openFolder(): void;
   /** Asks for a file name and creates the file in `directory`. */
   newFileIn(directory: string): void;
+  /** Asks for a name and creates an explorer group, moving `folder` into it if given. */
+  newGroup(folder?: string): void;
+  /** Asks for a new name for the group. */
+  renameGroup(id: string): void;
 }
+
+type GroupNameRequest = { mode: "create"; folder?: string } | { mode: "rename"; id: string };
 
 const FolderDialogsContext = createContext<FolderDialogsValue | null>(null);
 
@@ -28,6 +34,7 @@ export function FolderDialogsProvider({ children }: { children: ReactNode }) {
   const { addFolders, setSidebar } = useWorkspaceActions();
   const [browserOpen, setBrowserOpen] = useState(false);
   const [newFileDir, setNewFileDir] = useState<string | null>(null);
+  const [groupRequest, setGroupRequest] = useState<GroupNameRequest | null>(null);
 
   const openFolder = useCallback(() => {
     if (desktop) {
@@ -42,7 +49,13 @@ export function FolderDialogsProvider({ children }: { children: ReactNode }) {
     }
   }, [addFolders, setSidebar]);
 
-  const value = { openFolder, newFileIn: setNewFileDir };
+  // Stable value: every explorer row reads this context.
+  const value = useMemo<FolderDialogsValue>(() => ({
+    openFolder,
+    newFileIn: setNewFileDir,
+    newGroup: (folder?: string) => setGroupRequest({ mode: "create", folder }),
+    renameGroup: (id: string) => setGroupRequest({ mode: "rename", id }),
+  }), [openFolder]);
 
   return (
     <FolderDialogsContext.Provider value={value}>
@@ -57,6 +70,7 @@ export function FolderDialogsProvider({ children }: { children: ReactNode }) {
         }}
       />
       <NewFileDialog directory={newFileDir} onClose={() => setNewFileDir(null)} />
+      <GroupNameDialog request={groupRequest} onClose={() => setGroupRequest(null)} />
     </FolderDialogsContext.Provider>
   );
 }
@@ -151,6 +165,63 @@ function FolderBrowserDialog({ open, onOpenChange, onChoose }: {
   );
 }
 
+// ── Explorer group name ──────────────────────────────────────────────────────
+
+function GroupNameDialog({ request, onClose }: { request: GroupNameRequest | null; onClose(): void }) {
+  const { state } = useWorkspace();
+  const { createGroup, renameGroup, setSidebar } = useWorkspaceActions();
+  const [name, setName] = useState("");
+  const existing = request?.mode === "rename" ? state.groups.find(g => g.id === request.id) : undefined;
+
+  useEffect(() => {
+    if (request) setName(existing?.name ?? "");
+    // Reset only when a new request opens the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
+
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!request || !trimmed) return;
+    if (request.mode === "rename") renameGroup(request.id, trimmed);
+    else {
+      createGroup(trimmed, request.folder);
+      setSidebar({ visible: true, panel: "explorer" });
+    }
+    onClose();
+  };
+
+  return (
+    <Dialog open={!!request} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{request?.mode === "rename" ? "Rename Group" : "New Group"}</DialogTitle>
+          <DialogDescription className="break-all">
+            {request?.mode === "create" && request.folder
+              ? `Moves ${baseName(request.folder)} into the new group.`
+              : "Groups organise folders in the explorer. Each group can hide its tabs from the tab bar."}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <Input
+            autoFocus
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Group name"
+            maxLength={80}
+            data-testid="input-group-name"
+          />
+        </form>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={!name.trim()} data-testid="button-save-group">
+            {request?.mode === "rename" ? "Rename" : "Create"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── New file on disk ─────────────────────────────────────────────────────────
 
 // Used when the typed name has no extension. Typing a name with an extension
@@ -160,6 +231,7 @@ const NEW_FILE_TYPES = [
   { ext: ".json", label: "JSON (.json)" },
   { ext: ".yaml", label: "YAML (.yaml)" },
   { ext: ".drawio", label: "Draw.io (.drawio)" },
+  { ext: ".mermaid", label: "Mermaid (.mermaid)" },
   { ext: ".txt", label: "Text (.txt)" },
   { ext: "", label: "No extension" },
 ] as const;
@@ -167,7 +239,12 @@ const NEW_FILE_TYPES = [
 const EMPTY_DRAWIO =
   '<mxfile><diagram name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>\n';
 
-const STARTER_CONTENT: Record<string, string> = { ".json": "{}\n", ".drawio": EMPTY_DRAWIO };
+const STARTER_CONTENT: Record<string, string> = {
+  ".json": "{}\n",
+  ".drawio": EMPTY_DRAWIO,
+  ".mermaid": "flowchart TD\n    A[Start] --> B[End]\n",
+  ".mmd": "flowchart TD\n    A[Start] --> B[End]\n",
+};
 
 const hasExtension = (name: string) => /[^.]\.[^.\\/]+$/.test(name);
 

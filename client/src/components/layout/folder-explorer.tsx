@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   ChevronDown, ChevronRight, File, FileJson, FileText, Code2, Folder, FolderOpen, FolderPlus,
-  Loader2, RefreshCw, X, FilePlus, FolderMinus, Workflow, ArrowDownAZ, Clock,
+  Loader2, RefreshCw, X, FilePlus, FolderMinus, FolderOutput, Workflow, ArrowDownAZ, Clock, Image as ImageIcon, LocateFixed,
+  FileType, FileSpreadsheet, Globe, Layers, Shapes,
 } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
@@ -13,8 +14,12 @@ import {
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useFolderDialogs } from "@/components/layout/folder-dialogs";
-import { PathMenuItems, useIsInside, useTabsInFolder } from "@/components/layout/path-actions";
+import { PathMenuItems, useIsInside, useRootFolderOf, useTabsInFolder } from "@/components/layout/path-actions";
+import { GroupMenuItems, GroupSection, folderDragProps, useFolderDrop } from "@/components/layout/folder-groups";
 import { ExplorerSearchBox, FilteredTree, useExplorerSearch } from "@/components/layout/explorer-search";
+import { setRevealTarget, useRevealInExplorer, useRevealTarget } from "@/components/layout/explorer-reveal";
+import { useExplorerDragDrop } from "@/components/layout/explorer-dnd";
+import { MoveMenuItem } from "@/components/layout/move-file-context";
 import { useDebounce } from "@/hooks/use-debounce";
 import { baseName, fsApi, fsKeys, useFsStatus } from "@/lib/fs-api";
 import { fileUri, folderColour, useWorkspace, useWorkspaceActions, type ExplorerSort } from "@/lib/workspace";
@@ -27,7 +32,12 @@ function fileIcon(name: string) {
   if (type === "json") return <FileJson className="w-3.5 h-3.5 shrink-0 text-blue-400" />;
   if (type === "yaml") return <Code2 className="w-3.5 h-3.5 shrink-0 text-purple-400" />;
   if (type === "md") return <FileText className="w-3.5 h-3.5 shrink-0 text-gray-300" />;
+  if (type === "html") return <Globe className="w-3.5 h-3.5 shrink-0 text-rose-400" />;
   if (type === "drawio") return <Workflow className="w-3.5 h-3.5 shrink-0 text-orange-400" />;
+  if (type === "mermaid") return <Shapes className="w-3.5 h-3.5 shrink-0 text-pink-400" />;
+  if (type === "image") return <ImageIcon className="w-3.5 h-3.5 shrink-0 text-emerald-400" />;
+  if (type === "docx") return <FileType className="w-3.5 h-3.5 shrink-0 text-blue-400" />;
+  if (type === "xlsx") return <FileSpreadsheet className="w-3.5 h-3.5 shrink-0 text-green-400" />;
   return <File className="w-3.5 h-3.5 shrink-0 text-[#858585]" />;
 }
 
@@ -35,13 +45,25 @@ function fileIcon(name: string) {
 export function FolderExplorer() {
   const { data: status, isLoading: statusLoading } = useFsStatus();
   const { state } = useWorkspace();
-  const { openFolder } = useFolderDialogs();
+  const { openFolder, newGroup } = useFolderDialogs();
   const queryClient = useQueryClient();
+
+  const { activeUri } = useWorkspace();
+  const reveal = useRevealInExplorer();
+
+  // "Follow the active file": unfold to and highlight each file you switch to.
+  useEffect(() => {
+    if (state.explorer.autoReveal && activeUri?.startsWith("file:")) reveal(activeUri, { quiet: true, keepPanel: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUri, state.explorer.autoReveal]);
 
   const refreshAll = () => {
     queryClient.invalidateQueries({ queryKey: ["fs-list"] });
+    queryClient.invalidateQueries({ queryKey: ["fs-folders"] });
     queryClient.invalidateQueries({ queryKey: ["fs-search"] });
   };
+
+  const dragDrop = useExplorerDragDrop();
 
   // Search: names always, contents when toggled on. Contents need 2+ characters.
   const search = useExplorerSearch();
@@ -77,7 +99,24 @@ export function FolderExplorer() {
         <span className="text-[11px] font-semibold tracking-widest uppercase text-[#bbbbbb]">Explorer</span>
         {status?.enabled && (
           <div className="flex items-center gap-0.5">
+            <button
+              className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e] disabled:opacity-40"
+              onClick={() => activeUri && reveal(activeUri)}
+              disabled={!activeUri?.startsWith("file:")}
+              title="Reveal the active file"
+              data-testid="button-reveal-active"
+            >
+              <LocateFixed className="w-3.5 h-3.5" />
+            </button>
             <SortMenu />
+            <button
+              className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e]"
+              onClick={() => newGroup()}
+              title="New group"
+              data-testid="button-new-group"
+            >
+              <Layers className="w-3.5 h-3.5" />
+            </button>
             <button
               className="flex items-center justify-center w-6 h-6 rounded text-[#858585] hover:text-[#cccccc] hover:bg-[#2a2d2e]"
               onClick={refreshAll}
@@ -99,12 +138,17 @@ export function FolderExplorer() {
 
       {status?.enabled && state.folders.length > 0 && <ExplorerSearchBox summary={summary} />}
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden text-[13px] scroll-dark" role="tree" aria-label="Folders">
+      <div
+        className="flex-1 overflow-y-auto overflow-x-hidden text-[13px] scroll-dark"
+        role="tree"
+        aria-label="Folders"
+        {...dragDrop}
+      >
         {statusLoading ? null : !status?.enabled ? (
           <p className="px-4 py-3 text-[12px] text-[#858585]">
             Opening folders is available in the desktop app and when running locally.
           </p>
-        ) : state.folders.length === 0 ? (
+        ) : state.folders.length === 0 && state.groups.length === 0 ? (
           <div className="px-4 py-4 text-[12px] text-[#858585] space-y-3">
             <p>No folder open.</p>
             <button
@@ -115,46 +159,86 @@ export function FolderExplorer() {
             </button>
           </div>
         ) : (
-          state.folders.map((folder, index) => (
-            <FolderRoot
-              key={folder}
-              folder={folder}
-              index={index}
-              filtered={searching && found ? { results: resultsFor(folder), query } : undefined}
-            />
-          ))
+          <GroupedFolders filteredFor={searching && found ? (folder) => ({ results: resultsFor(folder), query }) : undefined} />
         )}
       </div>
     </div>
   );
 }
 
-function FolderRoot({ folder, index, filtered }: {
+type FilteredFor = (folder: string) => { results: FsSearchResult[]; query: string };
+
+/** Groups first (in the user's order), then the workspace folders that aren't in a group. */
+function GroupedFolders({ filteredFor }: { filteredFor?: FilteredFor }) {
+  const { state } = useWorkspace();
+  const grouped = new Set(state.groups.flatMap(g => g.folders));
+  const ungrouped = state.folders.filter(f => !grouped.has(f));
+  const drop = useFolderDrop(null);
+
+  return (
+    <>
+      {state.groups.map((group, index) => (
+        <GroupSection key={group.id} group={group} index={index} total={state.groups.length} forceOpen={!!filteredFor}>
+          {group.folders.map(folder => (
+            <FolderRoot key={folder} folder={folder} groupId={group.id} filtered={filteredFor?.(folder)} />
+          ))}
+        </GroupSection>
+      ))}
+      {/* Dropping a folder here takes it out of its group. */}
+      <div
+        className={`min-h-[28px] ${drop.over ? "bg-[#094771]/40 ring-1 ring-inset ring-[#007fd4]" : ""}`}
+        {...drop.handlers}
+        data-testid="ungrouped-folders"
+      >
+        {state.groups.length > 0 && (
+          <div className="flex items-center px-3 h-[22px] text-[10px] font-semibold uppercase tracking-widest text-[#6b6b6b]">
+            Ungrouped
+          </div>
+        )}
+        {ungrouped.map(folder => <FolderRoot key={folder} folder={folder} filtered={filteredFor?.(folder)} />)}
+        {state.groups.length > 0 && ungrouped.length === 0 && (
+          <p className="px-6 pb-2 text-[11.5px] text-[#6b6b6b] italic">Drop a folder here to take it out of its group.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function FolderRoot({ folder, groupId, filtered }: {
   folder: string;
-  index: number;
+  /** Shown inside this group (may be a workspace folder or a folder inside one). */
+  groupId?: string;
   /** While searching: show only these results (and the folders leading to them). */
   filtered?: { results: FsSearchResult[]; query: string };
 }) {
   const { state } = useWorkspace();
-  const { setExpanded, removeFolder, close } = useWorkspaceActions();
+  const { setExpanded, removeFolder, close, setFolderGroup } = useWorkspaceActions();
   const { newFileIn } = useFolderDialogs();
   const queryClient = useQueryClient();
   const tabsInFolder = useTabsInFolder();
+  const rootFolderOf = useRootFolderOf();
+  const index = state.folders.indexOf(folder);
+  const isRoot = index >= 0;
+  // A folder inside a workspace folder takes that folder's colour (matching its tabs).
+  const colourIndex = isRoot ? index : rootFolderOf(folder)?.index;
   const expanded = !!filtered || state.expanded.includes(folder);
-  const colour = folderColour(index);
+  const colour = colourIndex === undefined ? "#6b6b6b" : folderColour(colourIndex);
 
   const remove = () => {
     close(tabsInFolder(folder));
     removeFolder(folder);
   };
+  const removeFromGroup = () => setFolderGroup(folder, null);
 
   return (
-    <div className="border-b border-[#2d2d2d]" data-testid={`folder-root-${index}`}>
+    <div className={groupId ? "" : "border-b border-[#2d2d2d]"} data-testid={isRoot ? `folder-root-${index}` : "folder-group-entry"}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
+            {...folderDragProps(folder)}
             role="treeitem"
             aria-expanded={expanded}
+            data-drop-dir={folder}
             tabIndex={0}
             className="group flex items-center gap-1 pl-1 pr-1 h-[22px] cursor-pointer hover:bg-[#2a2d2e] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#007fd4]"
             onClick={() => setExpanded(folder, !expanded)}
@@ -165,7 +249,7 @@ function FolderRoot({ folder, index, filtered }: {
               {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </span>
             <span className="w-2 h-2 rounded-full shrink-0" style={{ background: colour }} aria-hidden />
-            <span className="flex-1 min-w-0 truncate font-semibold text-[11px] uppercase tracking-wider text-[#bbbbbb] ml-1">
+            <span className={`flex-1 min-w-0 truncate font-semibold text-[11px] tracking-wider text-[#bbbbbb] ml-1 ${isRoot ? "uppercase" : ""}`}>
               {baseName(folder)}
             </span>
             <span className="hidden group-hover:flex items-center gap-0.5">
@@ -176,14 +260,25 @@ function FolderRoot({ folder, index, filtered }: {
               >
                 <FilePlus className="w-3.5 h-3.5" />
               </button>
-              <button
-                className="flex items-center justify-center w-5 h-5 rounded hover:bg-[#3c3c3c] text-[#cccccc]"
-                onClick={(e) => { e.stopPropagation(); remove(); }}
-                title="Close folder"
-                data-testid={`button-close-folder-${index}`}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              {isRoot ? (
+                <button
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-[#3c3c3c] text-[#cccccc]"
+                  onClick={(e) => { e.stopPropagation(); remove(); }}
+                  title="Close folder"
+                  data-testid={`button-close-folder-${index}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <button
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-[#3c3c3c] text-[#cccccc]"
+                  onClick={(e) => { e.stopPropagation(); removeFromGroup(); }}
+                  title="Remove from group (the folder stays on disk and in its workspace folder)"
+                  data-testid="button-remove-from-group"
+                >
+                  <FolderOutput className="w-3.5 h-3.5" />
+                </button>
+              )}
             </span>
           </div>
         </ContextMenuTrigger>
@@ -195,17 +290,23 @@ function FolderRoot({ folder, index, filtered }: {
             <RefreshCw className="w-3.5 h-3.5 mr-2" /> Refresh
           </ContextMenuItem>
           <ContextMenuSeparator />
-          <PathMenuItems path={folder} isDirectory />
+          <GroupMenuItems path={folder} />
           <ContextMenuSeparator />
-          <ContextMenuItem onSelect={remove}>
-            <FolderMinus className="w-3.5 h-3.5 mr-2" /> Remove Folder from Workspace
-          </ContextMenuItem>
+          <PathMenuItems path={folder} isDirectory />
+          {isRoot && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={remove}>
+                <FolderMinus className="w-3.5 h-3.5 mr-2" /> Remove Folder from Workspace
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
 
       {filtered
         ? <FilteredTree root={folder} results={filtered.results} query={filtered.query} fileIcon={fileIcon} />
-        : expanded && <DirectoryChildren dir={folder} root={folder} depth={1} />}
+        : expanded && <DirectoryChildren dir={folder} root={rootFolderOf(folder)?.folder ?? folder} depth={1} />}
     </div>
   );
 }
@@ -214,7 +315,7 @@ function FolderRoot({ folder, index, filtered }: {
 function SortMenu() {
   const { state } = useWorkspace();
   const { setExplorer } = useWorkspaceActions();
-  const { sort, showDates } = state.explorer;
+  const { sort, showDates, autoReveal } = state.explorer;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -240,13 +341,20 @@ function SortMenu() {
         >
           Show modified date and time
         </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={autoReveal}
+          onCheckedChange={(checked) => setExplorer({ autoReveal: !!checked })}
+          data-testid="toggle-auto-reveal"
+        >
+          Follow the active file
+        </DropdownMenuCheckboxItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
 function DirectoryChildren({ dir, root, depth }: { dir: string; root: string; depth: number }) {
-  const { state } = useWorkspace();
+  const { state, activeUri } = useWorkspace();
   const sort = state.explorer.sort;
   const { data, isLoading, error } = useQuery({
     queryKey: fsKeys.list(dir),
@@ -272,30 +380,68 @@ function DirectoryChildren({ dir, root, depth }: { dir: string; root: string; de
     return <div className="h-[22px] text-[#858585] text-[12px] italic" style={pad}>Empty folder</div>;
   }
   return (
-    <div role="group">
-      {entries.map(entry => <EntryRow key={entry.path} entry={entry} root={root} depth={depth} />)}
+    <div role="group" data-drop-dir={dir}>
+      {entries.map(entry => (
+        <EntryRow
+          key={entry.path}
+          entry={entry}
+          root={root}
+          depth={depth}
+          expanded={entry.kind === "directory" && state.expanded.includes(entry.path)}
+          isActive={entry.kind === "file" && activeUri === fileUri(entry.path)}
+          showDates={state.explorer.showDates}
+        />
+      ))}
     </div>
   );
 }
 
-function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth: number }) {
-  const { state, activeUri } = useWorkspace();
+/**
+ * One file or folder row. Memoised with derived props (not the workspace
+ * context), so a workspace change only re-renders the rows it affects.
+ */
+const EntryRow = memo(function EntryRow({ entry, root, depth, expanded, isActive, showDates }: {
+  entry: FsEntry;
+  root: string;
+  depth: number;
+  expanded: boolean;
+  isActive: boolean;
+  showDates: boolean;
+}) {
   const { open, setExpanded } = useWorkspaceActions();
   const { newFileIn } = useFolderDialogs();
   const isDir = entry.kind === "directory";
-  const expanded = isDir && state.expanded.includes(entry.path);
-  const isActive = !isDir && activeUri === fileUri(entry.path);
 
   const activate = () => (isDir ? setExpanded(entry.path, !expanded) : open(fileUri(entry.path)));
+
+  // Scroll to and flash this row when it is the reveal target.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const revealTarget = useRevealTarget();
+  useEffect(() => {
+    if (!revealTarget || revealTarget.toLowerCase() !== entry.path.toLowerCase() || !rowRef.current) return;
+    const row = rowRef.current;
+    row.scrollIntoView({ block: "center" });
+    row.classList.remove("mdc-reveal");
+    void row.offsetWidth;
+    row.classList.add("mdc-reveal");
+    setRevealTarget(null);
+  }, [revealTarget, entry.path]);
 
   return (
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
+            ref={rowRef}
+            {...(isDir ? folderDragProps(entry.path) : {})}
             role="treeitem"
             aria-expanded={isDir ? expanded : undefined}
             aria-selected={isActive}
+            data-path={entry.path}
+            data-drop-dir={isDir ? entry.path : undefined}
+            data-drag-path={isDir ? undefined : entry.path}
+            // Files drag onto folders (move); folders drag onto explorer groups.
+            draggable
             tabIndex={0}
             className={`flex items-center gap-1.5 pr-2 h-[22px] cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#007fd4] ${
               isActive ? "bg-[#37373d] text-white" : "hover:bg-[#2a2d2e] text-[#cccccc]"
@@ -322,7 +468,7 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
               </>
             )}
             <span className="flex-1 truncate">{entry.name}</span>
-            {!isDir && state.explorer.showDates && entry.mtimeMs > 0 && (
+            {!isDir && showDates && entry.mtimeMs > 0 && (
               <span
                 className="shrink-0 ml-2 text-[10.5px] tabular-nums text-[#858585]"
                 title={`Modified ${format(entry.mtimeMs, "EEEE d MMMM yyyy, HH:mm:ss")}`}
@@ -335,13 +481,20 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
         </ContextMenuTrigger>
         <ContextMenuContent className="w-60">
           {isDir ? (
-            <ContextMenuItem onSelect={() => newFileIn(entry.path)}>
-              <FilePlus className="w-3.5 h-3.5 mr-2" /> New File…
-            </ContextMenuItem>
+            <>
+              <ContextMenuItem onSelect={() => newFileIn(entry.path)}>
+                <FilePlus className="w-3.5 h-3.5 mr-2" /> New File…
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <GroupMenuItems path={entry.path} />
+            </>
           ) : (
-            <ContextMenuItem onSelect={() => open(fileUri(entry.path))}>
-              {fileIcon(entry.name)} <span className="ml-2">Open</span>
-            </ContextMenuItem>
+            <>
+              <ContextMenuItem onSelect={() => open(fileUri(entry.path))}>
+                {fileIcon(entry.name)} <span className="ml-2">Open</span>
+              </ContextMenuItem>
+              <MoveMenuItem path={entry.path} />
+            </>
           )}
           <ContextMenuSeparator />
           <PathMenuItems path={entry.path} root={root} isDirectory={isDir} />
@@ -351,4 +504,4 @@ function EntryRow({ entry, root, depth }: { entry: FsEntry; root: string; depth:
       {expanded && <DirectoryChildren dir={entry.path} root={root} depth={depth + 1} />}
     </>
   );
-}
+});
