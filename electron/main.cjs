@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const pkg = require('../package.json');
 
 // In a packaged build app.isPackaged === true.
 // In dev (node electron/main.cjs) it is false.
@@ -350,6 +351,9 @@ async function createWindow() {
   // to ::1 first on some systems.
   const appOrigin = isPacked ? `http://127.0.0.1:${serverPort}` : `http://localhost:${serverPort}`;
 
+  const appBuildNumber = String(process.env.BUILD_NUMBER || pkg.buildNumber || '');
+  const appFullVersion = appBuildNumber ? `${app.getVersion()}.${appBuildNumber}` : app.getVersion();
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -360,6 +364,10 @@ async function createWindow() {
       contextIsolation: true,
       sandbox: true,
       preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: [
+        `--mdc-app-version=${appFullVersion}`,
+        `--mdc-build-number=${appBuildNumber}`,
+      ],
     },
     title: 'GD Markdown Composer',
     icon: path.join(__dirname, 'icons', 'icon-256.png'),

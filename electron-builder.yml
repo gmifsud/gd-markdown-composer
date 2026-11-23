@@ -1,10 +1,11 @@
+extends: file:electron/build-version.cjs
 appId: com.markdowneditor.app
 productName: GD Markdown Composer
 
 # Electron entry point: "main" in package.json (electron/main.cjs)
 
 directories:
-  output: electron-dist
+  output: electron-dist/${buildVersion}
 
 # Files to include in the packaged app
 files:
@@ -50,6 +51,7 @@ extraResources:
 
 # macOS
 mac:
+  artifactName: "${productName}-${buildVersion}-${arch}.${ext}"
   category: public.app-category.productivity
   icon: electron/icons/icon.png
   extraResources:
@@ -64,6 +66,7 @@ mac:
 
 # Windows
 win:
+  artifactName: "${productName} Setup ${buildVersion}.${ext}"
   icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-windows-${arch}/"
@@ -76,6 +79,7 @@ win:
 
 # Linux
 linux:
+  artifactName: "${productName}-${buildVersion}-${arch}.${ext}"
   icon: electron/icons/icon.png
   extraResources:
     - from: "bin/bun-linux-${arch}/"
