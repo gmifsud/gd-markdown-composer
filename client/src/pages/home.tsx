@@ -3,12 +3,14 @@ import { Menu, FileText, Plus, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TabBar } from "@/components/layout/tab-bar";
 import { AppToolbar } from "@/components/layout/app-toolbar";
+import { AboutDialog } from "@/components/layout/about-dialog";
 import { ActivityBar, WorkbenchSidebar } from "@/components/layout/workbench-sidebar";
 import { DocumentEditor, FileEditor } from "@/components/editor/editor-loaders";
 import { useCreateDocument } from "@/hooks/use-documents";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { APP_VERSION } from "@/lib/version";
 import { dbUri, parseUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 
 /**
@@ -61,6 +63,7 @@ function EmptyState() {
 export default function Home() {
   const { activeUri } = useWorkspace();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [mobileAboutOpen, setMobileAboutOpen] = useState(false);
   const isMobile = useIsMobile();
   const activeRef = activeUri ? parseUri(activeUri) : null;
 
@@ -99,11 +102,29 @@ export default function Home() {
             />
           </SheetContent>
         </Sheet>
-        <span className="font-semibold text-sm tracking-tight text-gray-800">
-          {activeUri ? "Editor" : "GD Markdown Composer"}
-        </span>
+        {activeUri ? (
+          <span className="font-semibold text-sm tracking-tight text-gray-800">
+            Editor
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setMobileAboutOpen(true)}
+            className="flex flex-col items-start text-left rounded px-1.5 py-0.5 hover:bg-gray-200/70 transition-colors"
+            title="About GD Markdown Composer"
+            data-testid="mobile-button-about"
+          >
+            <span className="font-semibold text-sm tracking-tight text-gray-800 leading-tight">
+              GD Markdown Composer
+            </span>
+            <span className="text-[10px] font-mono text-gray-400 leading-tight" data-testid="mobile-text-app-version">
+              v{APP_VERSION}
+            </span>
+          </button>
+        )}
       </div>
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">{content}</div>
+      <AboutDialog open={mobileAboutOpen} onOpenChange={setMobileAboutOpen} />
     </div>
   );
 }

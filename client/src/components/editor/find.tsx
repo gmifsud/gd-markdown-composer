@@ -1,19 +1,5 @@
-import { forwardRef, useEffect, useLayoutEffect, useRef, type ReactNode, type TextareaHTMLAttributes } from "react";
-import { ArrowDown, ArrowUp, CaseSensitive, X } from "lucide-react";
-
-export type Range = [start: number, end: number];
-
-/** Every occurrence of `query` in `text` (case-insensitive unless `matchCase`). */
-export function findMatches(text: string, query: string, matchCase: boolean): Range[] {
-  if (!query) return [];
-  const haystack = matchCase ? text : text.toLowerCase();
-  const needle = matchCase ? query : query.toLowerCase();
-  const out: Range[] = [];
-  for (let at = haystack.indexOf(needle); at >= 0 && out.length < 10_000; at = haystack.indexOf(needle, at + needle.length)) {
-    out.push([at, at + needle.length]);
-  }
-  return out;
-}
+import { useEffect, useRef } from "react";
+import { ArrowDown, ArrowUp, CaseSensitive, ChevronDown, ChevronRight, X } from "lucide-react";
 
 // ── Find bar ─────────────────────────────────────────────────────────────────
 
@@ -29,13 +15,28 @@ interface FindBarProps {
   onNext(): void;
   onPrevious(): void;
   onClose(): void;
+  /** Whether the replace row is open (only shown when `canReplace`). */
+  replaceOpen: boolean;
+  replacement: string;
+  /** False for read-only sources and the preview-only layout. */
+  canReplace: boolean;
+  onReplacement(value: string): void;
+  onToggleReplace(): void;
+  onReplace(): void;
+  onReplaceAll(): void;
 }
 
-/** Floating find box (Ctrl+F): Enter/F3 next, Shift+Enter/Shift+F3 previous, Esc closes. */
+/**
+ * Floating find box (Ctrl+F, or Ctrl+H with replace): Enter/F3 next,
+ * Shift+Enter/Shift+F3 previous, Esc closes. In the replace box, Enter
+ * replaces the current match and Ctrl+Alt+Enter replaces all.
+ */
 export function FindBar({
   query, matchCase, current, total, focusRequest, onQuery, onMatchCase, onNext, onPrevious, onClose,
+  replaceOpen, replacement, canReplace, onReplacement, onToggleReplace, onReplace, onReplaceAll,
 }: FindBarProps) {
   const input = useRef<HTMLInputElement>(null);
+  const showReplace = canReplace && replaceOpen;
 
   useEffect(() => {
     input.current?.focus();
@@ -46,10 +47,22 @@ export function FindBar({
 
   return (
     <div
-      className="absolute top-2 right-5 z-30 flex items-center gap-1 rounded-md border border-gray-200 bg-white pl-2 pr-1 py-1 shadow-lg"
+      className={`absolute top-2 right-5 z-30 flex flex-col gap-1 rounded-md border border-gray-200 bg-white ${canReplace ? "pl-1" : "pl-2"} pr-1 py-1 shadow-lg`}
       role="search"
       data-testid="find-bar"
     >
+      <div className="flex items-center gap-1">
+      {canReplace && (
+        <button
+          className={button}
+          onClick={onToggleReplace}
+          aria-expanded={showReplace}
+          title={showReplace ? "Hide replace" : "Replace (Ctrl+H)"}
+          data-testid="find-replace-toggle"
+        >
+          {showReplace ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+      )}
       <input
         ref={input}
         value={query}
@@ -87,87 +100,45 @@ export function FindBar({
       <button className={button} onClick={onClose} title="Close (Esc)" data-testid="find-close">
         <X className="w-3.5 h-3.5" />
       </button>
-    </div>
-  );
-}
-
-// ── Source textarea with match highlights ────────────────────────────────────
-
-interface SourceTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
-  value: string;
-  /** Matches to highlight, and which one is current. */
-  highlights?: { ranges: Range[]; current: number };
-  /** No soft wrapping (plain text files). */
-  noWrap?: boolean;
-}
-
-/**
- * A textarea with find highlights drawn on a layer behind it. The layer copies
- * the textarea's font, padding and wrapping and follows its scrolling, so the
- * marks line up with the text.
- */
-export const SourceTextarea = forwardRef<HTMLTextAreaElement, SourceTextareaProps>(function SourceTextarea(
-  { value, highlights, noWrap = false, className = "", onScroll, ...rest }, ref,
-) {
-  const layer = useRef<HTMLDivElement>(null);
-  const area = useRef<HTMLTextAreaElement | null>(null);
-  const show = !!highlights && highlights.ranges.length > 0;
-
-  const syncScroll = () => {
-    if (layer.current && area.current) {
-      layer.current.scrollTop = area.current.scrollTop;
-      layer.current.scrollLeft = area.current.scrollLeft;
-    }
-  };
-  useLayoutEffect(syncScroll);
-
-  let marked: ReactNode[] = [];
-  if (show) {
-    let from = 0;
-    highlights.ranges.forEach(([start, end], i) => {
-      if (start > from) marked.push(value.slice(from, start));
-      marked.push(
-        <mark key={start} className={i === highlights.current ? "bg-orange-300/80 text-transparent rounded-sm" : "bg-yellow-200/80 text-transparent rounded-sm"}>
-          {value.slice(start, end)}
-        </mark>,
-      );
-      from = end;
-    });
-    // A trailing line break needs a character after it to take up a line.
-    marked.push(value.slice(from) + "\n ");
-  }
-
-  const wrapClass = noWrap ? "whitespace-pre" : "whitespace-pre-wrap break-words";
-  // Both layers always reserve the vertical scrollbar so their text wraps at the same width.
-  const overflowClass = noWrap ? "overflow-scroll" : "overflow-y-scroll overflow-x-hidden";
-
-  return (
-    <div className="relative flex-1 min-h-0 flex">
-      {show && (
-        <div
-          ref={layer}
-          aria-hidden
-          className={`${className} ${wrapClass} ${overflowClass} mirror-scroll absolute inset-0 text-transparent pointer-events-none select-none`}
-          data-testid="find-highlight-layer"
-        >
-          {marked}
+      </div>
+      {showReplace && (
+        <div className="flex items-center gap-1 pl-7">
+          <input
+            value={replacement}
+            onChange={e => onReplacement(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.altKey) { e.preventDefault(); onReplaceAll(); }
+              else if (e.key === "Enter") { e.preventDefault(); onReplace(); }
+              if (e.key === "Escape") { e.preventDefault(); onClose(); }
+            }}
+            placeholder="Replace"
+            className="w-56 h-6 text-[13px] bg-transparent focus:outline-none"
+            aria-label="Replace with"
+            data-testid="find-replace-input"
+          />
+          <button
+            className="h-6 px-2 rounded text-[11px] font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+            onClick={onReplace}
+            disabled={!total}
+            title="Replace (Enter)"
+            data-testid="find-replace-one"
+          >
+            Replace
+          </button>
+          <button
+            className="h-6 px-2 rounded text-[11px] font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+            onClick={onReplaceAll}
+            disabled={!total}
+            title="Replace all (Ctrl+Alt+Enter)"
+            data-testid="find-replace-all"
+          >
+            Replace all
+          </button>
         </div>
       )}
-      <textarea
-        ref={(el) => {
-          area.current = el;
-          if (typeof ref === "function") ref(el);
-          else if (ref) ref.current = el;
-        }}
-        value={value}
-        wrap={noWrap ? "off" : undefined}
-        className={`${className} ${overflowClass} relative flex-1`}
-        onScroll={(e) => { syncScroll(); onScroll?.(e); }}
-        {...rest}
-      />
     </div>
   );
-});
+}
 
 // ── Preview highlights (CSS Custom Highlight API) ────────────────────────────
 
