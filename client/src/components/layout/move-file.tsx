@@ -15,6 +15,7 @@ import {
 } from "@/lib/fs-api";
 import { flushAllPendingSaves } from "@/lib/pending-saves";
 import { moveUnlocked } from "@/lib/unlocked-files";
+import { fileUrisAt } from "@/lib/recent";
 import { fileUri, folderColour, parseUri, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 
 /**
@@ -54,10 +55,9 @@ export function MoveFileProvider({ children }: { children: ReactNode }) {
     moving.current = true;
     const name = baseName(from);
     const { state: workspace, activeUri: active } = live.current;
-    const tabs = workspace.openTabs.filter(uri => {
-      const ref = parseUri(uri);
-      return ref?.kind === "file" && samePath(ref.path, from, caseInsensitive);
-    });
+    const tabs = fileUrisAt(workspace.openTabs, from, caseInsensitive);
+    // Recently opened entries follow the file too, even when its tab is closed.
+    const closedRecents = fileUrisAt(workspace.recent, from, caseInsensitive).filter(u => !tabs.includes(u));
     try {
       // Only the open tab can have unsaved edits. They are written first so they move with the file.
       if (active && tabs.includes(active) && !(await flushAllPendingSaves())) {
@@ -72,6 +72,7 @@ export function MoveFileProvider({ children }: { children: ReactNode }) {
         if (ref?.kind === "file") moveUnlocked(ref.path, moved.path);
         retarget(uri, toUri);
       }
+      for (const uri of closedRecents) retarget(uri, toUri);
       refreshFolders(dirName(from), toDirectory);
       toast({ description: `Moved "${name}" to "${baseName(toDirectory)}"` });
       // Show where it went, unless a search is showing or the explorer isn't on screen.

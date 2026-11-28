@@ -354,6 +354,18 @@ Plan: [superpowers/plans/2026-11-21-codemirror-editor.md](superpowers/plans/2026
 - **Undo history and scroll position** survive switching Edit / Split / Preview and the mobile Edit / Preview tabs.
 - **T2.6 (partial):** the editor and the Markdown preview load as their own chunk. The app's entry chunk went from 1.26 MB to 0.57 MB.
 
+### Progress: command palette and Quick Open (2026-11-25, branch `feature/command-palette`)
+
+Spec: [superpowers/specs/2026-11-23-command-palette-design.md](superpowers/specs/2026-11-23-command-palette-design.md). Plan: [superpowers/plans/2026-11-24-command-palette.md](superpowers/plans/2026-11-24-command-palette.md).
+
+- **T3.1 / T3.2 done (registry and palette).**
+  - A command registry (`client/src/lib/commands.ts`) holds every palette action with its category, shortcut label and `when` condition. The toolbar, activity bar, tab bar, editor and palette register their own commands.
+  - Ctrl/Cmd+P opens Quick Open. It lists open tabs, then the 50 most recently opened files and documents (a new `recent` list in the workspace), then database documents and file names from the open folders (server search, debounced).
+  - Ctrl/Cmd+Shift+P or F1 runs commands and shows their shortcuts. In the same box, `>` switches to commands, `@` lists the headings of the active Markdown document, and `:n` goes to line n.
+  - Ctrl+P no longer opens the browser's Print dialog.
+- **T3.7 (partial):** recent files appear in Quick Open. They are not yet shown on the empty state.
+- **Still open from T3.1:** rebinding shortcuts, driving the Electron menu from the registry (T6.6), and moving the older Ctrl+F / Ctrl+H / F3 / Ctrl+Shift+F / Ctrl+S listeners into the registry.
+
 ## 6. Suggested order and milestones
 
 ```

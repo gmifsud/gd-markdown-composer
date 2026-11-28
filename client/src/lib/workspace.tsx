@@ -3,6 +3,7 @@ import {
 } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { isInside } from "@/lib/fs-api";
+import { normalizeRecent, pruneRecent, pushRecent, retargetRecent } from "@/lib/recent";
 
 /**
  * Workspace state: open folders, open tabs, pins, explorer expansion and
@@ -73,6 +74,8 @@ export interface WorkspaceState {
   groups: FolderGroup[];
   openTabs: string[];
   pinned: string[];
+  /** Recently opened tab URIs, most recent first (capped; see lib/recent.ts). */
+  recent: string[];
   expanded: string[];
   sidebar: { visible: boolean; width: number; panel: SidebarPanel };
   editorMode: EditorMode;
@@ -99,6 +102,7 @@ const initialState: WorkspaceState = {
   groups: [],
   openTabs: [],
   pinned: [],
+  recent: [],
   expanded: [],
   sidebar: { visible: true, width: SIDEBAR_DEFAULT_WIDTH, panel: "explorer" },
   editorMode: "split",
@@ -117,6 +121,7 @@ function loadState(): WorkspaceState {
       return {
         ...initialState,
         ...parsed,
+        recent: normalizeRecent(parsed.recent),
         sidebar: { ...initialState.sidebar, ...parsed.sidebar },
         explorer: { ...initialState.explorer, ...parsed.explorer },
       };
@@ -133,6 +138,7 @@ function loadState(): WorkspaceState {
 type Action =
   | { type: "open"; uri: string; after: string | null }
   | { type: "close"; uris: string[] }
+  | { type: "forgetRecent"; uri: string }
   | { type: "retarget"; from: string; to: string }
   | { type: "togglePin"; uri: string }
   | { type: "addFolders"; paths: string[] }
@@ -169,12 +175,18 @@ function assignFolder(groups: FolderGroup[], path: string, groupId: string | nul
 function reducer(state: WorkspaceState, action: Action): WorkspaceState {
   switch (action.type) {
     case "open": {
-      if (state.openTabs.includes(action.uri)) return state;
+      // Opening an already-open tab still makes it the most recent.
+      const recent = pushRecent(state.recent, action.uri);
+      if (state.openTabs.includes(action.uri)) return recent === state.recent ? state : { ...state, recent };
       // New tabs open to the right of the active one, as in VS Code.
       const openTabs = [...state.openTabs];
       const at = action.after ? openTabs.indexOf(action.after) : -1;
       openTabs.splice(at >= 0 ? at + 1 : openTabs.length, 0, action.uri);
-      return { ...state, openTabs };
+      return { ...state, openTabs, recent };
+    }
+    case "forgetRecent": {
+      const recent = pruneRecent(state.recent, u => u !== action.uri);
+      return recent === state.recent ? state : { ...state, recent };
     }
     case "close": {
       const closing = new Set(action.uris);
@@ -193,7 +205,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       };
       const openTabs = swap(state.openTabs);
       const pinned = swap(state.pinned);
-      return openTabs === state.openTabs && pinned === state.pinned ? state : { ...state, openTabs, pinned };
+      const recent = retargetRecent(state.recent, action.from, action.to);
+      return openTabs === state.openTabs && pinned === state.pinned && recent === state.recent
+        ? state
+        : { ...state, openTabs, pinned, recent };
     }
     case "togglePin": {
       const pinned = state.pinned.includes(action.uri)
@@ -264,8 +279,9 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     case "pruneDb": {
       const existing = new Set(action.existingIds.map(dbUri));
       const keep = (u: string) => !u.startsWith("db:") || existing.has(u);
-      if (state.openTabs.every(keep) && state.pinned.every(keep)) return state;
-      return { ...state, openTabs: state.openTabs.filter(keep), pinned: state.pinned.filter(keep) };
+      const recent = pruneRecent(state.recent, keep);
+      if (state.openTabs.every(keep) && state.pinned.every(keep) && recent === state.recent) return state;
+      return { ...state, openTabs: state.openTabs.filter(keep), pinned: state.pinned.filter(keep), recent };
     }
   }
 }
@@ -331,6 +347,8 @@ function createActions(
       }
     },
     togglePin: (uri: string) => dispatch({ type: "togglePin", uri }),
+    /** Drops a uri from the recently opened list (its file or document is gone). */
+    forgetRecent: (uri: string) => dispatch({ type: "forgetRecent", uri }),
     addFolders: (paths: string[]) => dispatch({ type: "addFolders", paths }),
     removeFolder: (path: string) => dispatch({ type: "removeFolder", path }),
     setExpanded: (path: string, expanded: boolean) => dispatch({ type: "setExpanded", path, expanded }),

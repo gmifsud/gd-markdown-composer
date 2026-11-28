@@ -13,6 +13,15 @@ export function lineRangeInDoc(doc: Text, line: number, query?: string): Range {
   return [from, to];
 }
 
+/**
+ * A jump to a bare line (Go to Line) can only be shown in the source; headings
+ * and search matches can also be found in the preview. True when the source
+ * editor has to be brought on screen first.
+ */
+export function needsSourceForReveal(target: { line: number; query?: string; heading?: unknown }, hasEditor: boolean) {
+  return !hasEditor && !target.heading && !target.query;
+}
+
 /** Selects a range in the source editor and scrolls it to about a third of the way down. */
 export function revealInEditor(view: EditorView, [from, to]: Range, opts: { focus?: boolean } = {}) {
   view.dispatch({

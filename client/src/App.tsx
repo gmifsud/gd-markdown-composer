@@ -11,6 +11,7 @@ import { WorkspaceProvider, fileUri, useWorkspaceActions } from "@/lib/workspace
 import { desktop } from "@/lib/fs-api";
 import { FolderDialogsProvider } from "@/components/layout/folder-dialogs";
 import { MoveFileProvider } from "@/components/layout/move-file";
+import { CommandPalette } from "@/components/palette/command-palette";
 
 installPendingSaveHooks();
 
@@ -55,6 +56,7 @@ function App() {
             <DesktopFileOpener />
             <MoveFileProvider>
               <Router />
+              <CommandPalette />
             </MoveFileProvider>
           </FolderDialogsProvider>
         </WorkspaceProvider>

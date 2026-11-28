@@ -15,6 +15,7 @@ import { MoveMenuItem } from "@/components/layout/move-file-context";
 import { useRevealInExplorer } from "@/components/layout/explorer-reveal";
 import { useDeleteDocument, useDocuments } from "@/hooks/use-documents";
 import { baseName } from "@/lib/fs-api";
+import { useRegisterCommands } from "@/lib/commands";
 import {
   folderColour, orderedTabs, parseUri, useWorkspace, useWorkspaceActions, type FolderGroup,
 } from "@/lib/workspace";
@@ -116,6 +117,22 @@ export function TabBar() {
       area.scrollTop = el.offsetTop + el.offsetHeight - area.clientHeight;
     }
   }, [activeUri, tabs.length]);
+
+  // Palette commands; bulk closes follow the context menu (visible, unpinned tabs).
+  const closableTabs = visibleTabs.filter(t => !state.pinned.includes(t.uri)).map(t => t.uri);
+  const otherTabs = closableTabs.filter(u => u !== activeUri);
+  const closableKey = closableTabs.join("\n");
+  useRegisterCommands([
+    { id: "tabs.close", title: "Close Tab", category: "Tabs", when: () => !!activeUri, run: () => activeUri && close([activeUri]) },
+    { id: "tabs.closeOthers", title: "Close Other Tabs", category: "Tabs", when: () => otherTabs.length > 0, run: () => close(otherTabs) },
+    { id: "tabs.closeAll", title: "Close All Tabs", category: "Tabs", when: () => closableTabs.length > 0, run: () => close(closableTabs) },
+    {
+      id: "go.revealActive", title: "Reveal Active File in Explorer", category: "Go",
+      when: () => !!activeUri, run: () => activeUri && reveal(activeUri),
+    },
+    // `closableKey` stands in for both tab lists.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [activeUri, closableKey, reveal]);
 
   if (tabs.length === 0) {
     return <div className="h-8 shrink-0 bg-[#f3f3f3] border-b border-gray-200" />;
@@ -239,7 +256,7 @@ export function TabBar() {
   };
 
   const pinnedTabs = visibleTabs.filter(t => state.pinned.includes(t.uri));
-  const otherTabs = visibleTabs.filter(t => !state.pinned.includes(t.uri));
+  const unpinnedTabs = visibleTabs.filter(t => !state.pinned.includes(t.uri));
 
   return (
     // Capped height: with very many tabs the area scrolls instead of pushing the editor down.
@@ -253,9 +270,9 @@ export function TabBar() {
         </TabRow>
       )}
       <TabRow label="Open tabs" testId="tab-row-open">
-        {otherTabs.length === 0
+        {unpinnedTabs.length === 0
           ? <span className="flex items-center h-8 px-3 text-[12px] text-gray-400">No other open tabs</span>
-          : otherTabs.map(tab => renderTab(tab, visibleTabs.indexOf(tab)))}
+          : unpinnedTabs.map(tab => renderTab(tab, visibleTabs.indexOf(tab)))}
         {hiddenTabs.length > 0 && <HiddenTabsMenu tabs={hiddenTabs} onOpen={open} />}
       </TabRow>
     </div>

@@ -130,7 +130,7 @@ export function FileEditor({ path, uri }: { path: string; uri: string }) {
 
 function TextFileEditor({ path, uri }: { path: string; uri: string }) {
   const queryClient = useQueryClient();
-  const { close } = useWorkspaceActions();
+  const { close, forgetRecent } = useWorkspaceActions();
   usePreloadEditor();
   // Always read fresh from disk when a file tab is shown again.
   const { data, isLoading, error } = useQuery({
@@ -139,6 +139,11 @@ function TextFileEditor({ path, uri }: { path: string; uri: string }) {
     staleTime: 0,
     gcTime: 0,
   });
+  const missing = error instanceof FsNotFoundError;
+  // A deleted file leaves Quick Open's recents (its tab stays until closed).
+  useEffect(() => {
+    if (missing) forgetRecent(uri);
+  }, [missing, uri, forgetRecent]);
 
   const mtime = useRef<number | null>(null);
 
@@ -174,7 +179,6 @@ function TextFileEditor({ path, uri }: { path: string; uri: string }) {
   if (isLoading) return <Loading label="Opening file..." />;
 
   if (error || !data) {
-    const missing = error instanceof FsNotFoundError;
     return (
       <Message icon={<FileWarning className="w-8 h-8" />} title={missing ? "File Not Found" : "Couldn't Open File"}>
         <p className="mb-4">{missing ? path : (error as Error)?.message ?? path}</p>

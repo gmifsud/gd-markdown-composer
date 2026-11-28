@@ -9,13 +9,14 @@ import { useFolderDialogs } from "@/components/layout/folder-dialogs";
 import { useCreateDocument } from "@/hooks/use-documents";
 import { useFsStatus, baseName } from "@/lib/fs-api";
 import { flushAllPendingSaves } from "@/lib/pending-saves";
+import { useRegisterCommands } from "@/lib/commands";
 import { APP_VERSION } from "@/lib/version";
 import { dbUri, folderColour, useWorkspace, useWorkspaceActions } from "@/lib/workspace";
 
 const NEW_TYPES = [
-  { type: "md", label: "Markdown", ext: ".md", icon: <FileText className="w-3.5 h-3.5 text-gray-500" /> },
-  { type: "json", label: "JSON", ext: ".json", icon: <FileJson className="w-3.5 h-3.5 text-blue-500" /> },
-  { type: "yaml", label: "YAML", ext: ".yaml", icon: <Code2 className="w-3.5 h-3.5 text-purple-500" /> },
+  { type: "md", label: "Markdown", ext: ".md", commandId: "file.newMarkdown", icon: <FileText className="w-3.5 h-3.5 text-gray-500" /> },
+  { type: "json", label: "JSON", ext: ".json", commandId: "file.newJson", icon: <FileJson className="w-3.5 h-3.5 text-blue-500" /> },
+  { type: "yaml", label: "YAML", ext: ".yaml", commandId: "file.newYaml", icon: <Code2 className="w-3.5 h-3.5 text-purple-500" /> },
 ] as const;
 
 const toolbarButton =
@@ -32,6 +33,21 @@ export function AppToolbar() {
 
   const createDocument = (fileType: "md" | "json" | "yaml") =>
     createMutation.mutate({ fileType }, { onSuccess: (d) => open(dbUri(d.id)) });
+
+  const fsEnabled = !!fsStatus?.enabled;
+  const sidebarVisible = state.sidebar.visible;
+  useRegisterCommands([
+    ...NEW_TYPES.map(t => ({
+      id: t.commandId, title: `New ${t.label} Document`, category: "File",
+      run: () => createDocument(t.type),
+    })),
+    { id: "file.openFolder", title: "Open Folder…", category: "File", when: () => fsEnabled, run: openFolder },
+    { id: "file.saveAll", title: "Save All", category: "File", run: () => void flushAllPendingSaves() },
+    { id: "view.toggleSidebar", title: "Toggle Sidebar", category: "View", run: () => setSidebar({ visible: !sidebarVisible }) },
+    { id: "help.about", title: "About GD Markdown Composer", category: "Help", run: () => setAboutOpen(true) },
+    // createDocument and openFolder only use stable mutation/dialog functions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [sidebarVisible, fsEnabled]);
 
   return (
     <div className="h-9 shrink-0 flex items-center gap-1 px-2 bg-[#f3f3f3] border-b border-gray-200" role="toolbar" aria-label="Main toolbar">

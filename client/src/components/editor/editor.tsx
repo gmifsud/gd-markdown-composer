@@ -26,9 +26,10 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { useWorkspace, useWorkspaceActions, type EditorMode } from "@/lib/workspace";
 import { clearActiveEditor, publishActiveEditor, registerRevealHandler } from "@/lib/active-editor";
+import { useRegisterCommands } from "@/lib/commands";
 import type { FileKind } from "@shared/fs";
 import {
-  lineRangeInDoc, occurrencesBefore, revealHeadingInPreview, revealInEditor, revealTextInPreview,
+  lineRangeInDoc, needsSourceForReveal, occurrencesBefore, revealHeadingInPreview, revealInEditor, revealTextInPreview,
 } from "@/components/editor/reveal";
 
 /** What the editor shows and how it saves: a database document or a file on disk. */
@@ -86,6 +87,12 @@ const MODES: { mode: EditorMode; label: string; icon: JSX.Element }[] = [
   { mode: "edit", label: "Edit only", icon: <PenLine className="w-3.5 h-3.5" /> },
   { mode: "split", label: "Edit and preview side by side", icon: <Columns2 className="w-3.5 h-3.5" /> },
   { mode: "preview", label: "Preview only", icon: <Eye className="w-3.5 h-3.5" /> },
+];
+
+const LAYOUT_COMMANDS: { mode: EditorMode; id: string; title: string }[] = [
+  { mode: "edit", id: "view.editOnly", title: "Layout: Edit Only" },
+  { mode: "split", id: "view.split", title: "Layout: Split" },
+  { mode: "preview", id: "view.previewOnly", title: "Layout: Preview Only" },
 ];
 
 /** Segmented control for the editor layout; the choice applies to every document. */
@@ -159,7 +166,10 @@ export function Editor({ source }: EditorProps) {
 
   // Jumps from the Outline and search results: select the line in the source
   // (when shown) and scroll the preview to the heading or matching text.
-  useEffect(() => registerRevealHandler(source.uri, function reveal(target) {
+  // The handler below is registered once per document; it reads the current setter from here.
+  const revealLayout = useRef({ setMode });
+  revealLayout.current = { setMode };
+  useEffect(() => registerRevealHandler(source.uri, function reveal(target, retried = false) {
     const fm = frontMatterRef.current;
     // Lines are counted in the whole file; the preview never shows front matter.
     const bodyLine = target.line - fm.lines;
@@ -167,6 +177,13 @@ export function Editor({ source }: EditorProps) {
       // The target is inside the folded front matter: unfold it, then try again.
       setFrontMatterOpen(true);
       setTimeout(() => reveal(target), 30);
+      return;
+    }
+    // Go to Line in the preview-only layout: show the source beside the
+    // preview, then try again (once, in case the source can't be shown).
+    if (needsSourceForReveal(target, !!viewRef.current) && !retried) {
+      revealLayout.current.setMode("split");
+      setTimeout(() => reveal(target, true), 30);
       return;
     }
     // The editor holds the whole file, so whole-file line numbers apply.
@@ -387,6 +404,47 @@ export function Editor({ source }: EditorProps) {
   };
 
   const placeholder = isJson ? "Start writing JSON..." : isYaml ? "Start writing YAML..." : "Start writing...";
+
+  // Palette commands. They read `live` when listed or run, so they are
+  // registered once per document instead of on every keystroke.
+  const liveNow = {
+    flush, openFind, setMode, mode, readOnly, canReplace, isPlainText, isMobile, isMarkdown, compact, fullWidth,
+    frontMatterOpen: workspace.frontMatterOpen, hasFrontMatter: !!frontMatter?.block,
+    fullWidthAvailable: !isPlainText && !isStructured && !isDiagramFile && !isMobile && mode !== "edit",
+  };
+  const live = useRef(liveNow);
+  live.current = liveNow;
+  useRegisterCommands([
+    { id: "file.save", title: "Save", category: "File", keys: "Mod+S", when: () => !live.current.readOnly, run: () => void live.current.flush() },
+    ...LAYOUT_COMMANDS.map(m => ({
+      id: m.id,
+      title: m.title,
+      category: "View",
+      when: () => !live.current.isPlainText && !live.current.isMobile && live.current.mode !== m.mode,
+      run: () => live.current.setMode(m.mode),
+    })),
+    {
+      id: "view.toggleCompact", title: "Toggle Compact Spacing", category: "View",
+      when: () => live.current.isMarkdown && !live.current.isMobile, run: () => setCompact(!live.current.compact),
+    },
+    {
+      id: "view.toggleFullWidth", title: "Toggle Full-Width Preview", category: "View",
+      when: () => live.current.fullWidthAvailable, run: () => setPreviewFullWidth(!live.current.fullWidth),
+    },
+    {
+      id: "view.foldFrontMatter", title: "Fold Front Matter", category: "View",
+      when: () => live.current.hasFrontMatter && live.current.frontMatterOpen, run: () => setFrontMatterOpen(false),
+    },
+    {
+      id: "view.unfoldFrontMatter", title: "Unfold Front Matter", category: "View",
+      when: () => live.current.hasFrontMatter && !live.current.frontMatterOpen, run: () => setFrontMatterOpen(true),
+    },
+    { id: "search.find", title: "Find in Document", category: "Search", keys: "Mod+F", run: () => live.current.openFind() },
+    {
+      id: "search.replace", title: "Replace in Document", category: "Search", keys: "Mod+H",
+      when: () => live.current.canReplace, run: () => live.current.openFind(true),
+    },
+  ], [source.uri]);
 
   const structuredPreview = (
     <div className={`font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words ${

@@ -47,6 +47,11 @@ export function clearActiveEditor(uri: string) {
   }
 }
 
+/** The active editor at call time, for event handlers that shouldn't subscribe. */
+export function getActiveEditor(): ActiveEditorInfo | null {
+  return active;
+}
+
 export function useActiveEditor() {
   return useSyncExternalStore(
     (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },

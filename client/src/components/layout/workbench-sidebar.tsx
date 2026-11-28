@@ -4,15 +4,16 @@ import { FolderExplorer } from "@/components/layout/folder-explorer";
 import { DocumentsPanel } from "@/components/layout/documents-panel";
 import { OutlinePanel } from "@/components/layout/outline-panel";
 import { focusExplorerSearch } from "@/components/layout/explorer-search";
+import { commandRegistry } from "@/lib/commands";
 import {
   SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
   useWorkspace, useWorkspaceActions, type SidebarPanel,
 } from "@/lib/workspace";
 
-const PANELS: { id: SidebarPanel; label: string; icon: JSX.Element }[] = [
-  { id: "explorer", label: "Explorer (folders)", icon: <Files className="w-5 h-5" /> },
-  { id: "documents", label: "Documents by type", icon: <Library className="w-5 h-5" /> },
-  { id: "outline", label: "Outline (headings of the open Markdown file)", icon: <ListTree className="w-5 h-5" /> },
+const PANELS: { id: SidebarPanel; label: string; command: string; icon: JSX.Element }[] = [
+  { id: "explorer", label: "Explorer (folders)", command: "Explorer", icon: <Files className="w-5 h-5" /> },
+  { id: "documents", label: "Documents by type", command: "Documents", icon: <Library className="w-5 h-5" /> },
+  { id: "outline", label: "Outline (headings of the open Markdown file)", command: "Outline", icon: <ListTree className="w-5 h-5" /> },
 ];
 
 /** Left activity bar: picks the sidebar panel; clicking the active one hides the sidebar. */
@@ -23,16 +24,29 @@ export function ActivityBar() {
 
   // Ctrl/Cmd+Shift+F: search file contents in the open folders.
   useEffect(() => {
+    const searchInFolders = () => {
+      setSidebar({ visible: true, panel: "explorer" });
+      // Wait for the explorer to mount before focusing its search box.
+      setTimeout(() => focusExplorerSearch(true), 0);
+    };
     const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        setSidebar({ visible: true, panel: "explorer" });
-        // Wait for the explorer to mount before focusing its search box.
-        setTimeout(() => focusExplorerSearch(true), 0);
+        searchInFolders();
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const unregister = commandRegistry.register([
+      ...PANELS.map(p => ({
+        id: `view.show${p.command}`, title: `Show ${p.command}`, category: "View",
+        run: () => setSidebar({ visible: true, panel: p.id }),
+      })),
+      { id: "search.inFolders", title: "Search in Folders", category: "Search", keys: "Mod+Shift+F", run: searchInFolders },
+    ]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      unregister();
+    };
   }, [setSidebar]);
 
   return (
